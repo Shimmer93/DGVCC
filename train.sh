@@ -1,0 +1,1 @@
+python main.py --train --config configs/test.yml --device cuda:0 --only_reg
