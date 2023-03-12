@@ -13,6 +13,12 @@ from datasets.base_dataset import BaseDataset
 from utils.misc import random_crop, get_padding
 
 class DensityMapDataset(BaseDataset):
+    def collate(batch):
+        transposed_batch = list(zip(*batch))
+        images = torch.stack(transposed_batch[0], 0)
+        points = transposed_batch[1]  # the number of points is not fixed, keep it as a list of tensor
+        dmaps = torch.stack(transposed_batch[2], 0)
+        return images, (points, dmaps)
 
     def __init__(self, root, crop_size, downsample, method, is_grey, unit_size, pre_resize=1, roi_map_path=None, gt_dir=None):
         super().__init__(root, crop_size, downsample, method, is_grey, unit_size, pre_resize, roi_map_path)

@@ -18,6 +18,9 @@ class ConvBlock(nn.Module):
             y = self.relu(y)
         return y
 
+def upsample(x, scale_factor=2):
+    return F.interpolate(x, scale_factor=scale_factor, mode='nearest')
+
 class AdaIN2d(nn.Module):
     def __init__(self, style_dim, num_features):
         super().__init__()
@@ -38,7 +41,77 @@ class VGGEncoder(nn.Module):
 
     def forward(self, x):
         return self.encoder(x)
+    
+class Generator(nn.Module):
+    def __init__(self, style_dim=64, pretrained=True):
+        super().__init__()
+        vgg = models.vgg19(weights=models.VGG19_Weights.DEFAULT if pretrained else None)
+        vgg_feats = list(vgg.features.children())
+        self.stage1 = nn.Sequential(*vgg_feats[:4])
+        self.stage2 = nn.Sequential(*vgg_feats[4:9])
+        self.stage3 = nn.Sequential(*vgg_feats[9:18])
+        self.stage4 = nn.Sequential(*vgg_feats[18:27])
 
+        self.adain1 = AdaIN2d(style_dim, 64)
+        self.adain2 = AdaIN2d(style_dim, 128)
+        self.adain3 = AdaIN2d(style_dim, 256)
+        self.adain4 = AdaIN2d(style_dim, 512)
+
+        self.dec4 = nn.Sequential(
+            ConvBlock(512, 512),
+            ConvBlock(512, 256)
+        )
+
+        self.dec3 = nn.Sequential(
+            ConvBlock(512, 256),
+            ConvBlock(256, 128)
+        )
+
+        self.dec2 = nn.Sequential(
+            ConvBlock(256, 128),
+            ConvBlock(128, 64)
+        )
+
+        self.dec1 = nn.Sequential(
+            ConvBlock(128, 128),
+            ConvBlock(128, 64)
+        )
+
+        self.head = nn.Sequential(
+            ConvBlock(64, 64),
+            ConvBlock(64, 3, kernel_size=1, padding=0, bn=False, relu=False)
+        )
+
+    def forward(self, x, z=None):
+        x1 = self.stage1(x) # 64
+        x2 = self.stage2(x1) # 128
+        x3 = self.stage3(x2) # 256
+        x4 = self.stage4(x3) # 512
+
+        if z is not None:
+            x1 = self.adain1(x1, z)
+            x2 = self.adain2(x2, z)
+            x3 = self.adain3(x3, z)
+            x4 = self.adain4(x4, z)
+
+        x = self.dec4(x4) # 256
+        x = upsample(x) # 256
+        x = torch.cat([x, x3], dim=1) # 512
+
+        x = self.dec3(x) # 128
+        x = upsample(x) # 128
+        x = torch.cat([x, x2], dim=1) # 256
+
+        x = self.dec2(x) # 64
+        x = upsample(x) # 64
+        x = torch.cat([x, x1], dim=1) # 128
+
+        x = self.dec1(x) # 64
+
+        x = self.head(x)
+
+        return x
+    
 class ReverseVGGDecoder(nn.Module):
     def __init__(self):
         super().__init__()
@@ -73,19 +146,18 @@ class AdaINAutoEncoder(nn.Module):
         x = self.encoder(x)
         if z is not None:
             x = self.adain(x, z)
+        t = x
         x = self.decoder(x)
-        return x
+        return x, t
     
-def upsample(x, scale_factor=2):
-    return F.interpolate(x, scale_factor=scale_factor, mode='nearest')
 
 class MultiScaleVGGEncoder(nn.Module):
     def __init__(self, pretrained=True):
         super().__init__()
-        vgg = models.vgg19(weights=models.VGG19_Weights.DEFAULT if pretrained else None)
-        self.stage1 = nn.Sequential(*list(vgg.features.children())[:18])
-        self.stage2 = nn.Sequential(*list(vgg.features.children())[18:27])
-        self.stage3 = nn.Sequential(*list(vgg.features.children())[27:36])
+        vgg = models.vgg16_bn(weights=models.VGG16_BN_Weights.DEFAULT if pretrained else None)
+        self.stage1 = nn.Sequential(*list(vgg.features.children())[:23])
+        self.stage2 = nn.Sequential(*list(vgg.features.children())[23:33])
+        self.stage3 = nn.Sequential(*list(vgg.features.children())[33:43])
 
         self.dec3 = nn.Sequential(
             ConvBlock(512, 1024),
@@ -145,11 +217,14 @@ class DensityRegressor(nn.Module):
         super().__init__()
         self.enc = MultiScaleVGGEncoder(pretrained=pretrained)
         self.channel_reduce = nn.Sequential(
-            ConvBlock(512+256+128, 512, 1, padding=0),
-            nn.Dropout2d(0.5)
+            ConvBlock(512+256+128, 512),
+            ConvBlock(512, 256),
+            ConvBlock(256, 128)
         )
 
-        self.head = RegressionHead()
+        self.head = nn.Sequential(
+            ConvBlock(128, 1, kernel_size=1, padding=0, bn=False, relu=False)
+        )
 
     def forward(self, x):
         f, f_var = self.enc(x)
@@ -160,8 +235,10 @@ class DensityRegressor(nn.Module):
 class DGVCCNet(nn.Module):
     def __init__(self, style_dim=64, pretrained=True):
         super().__init__()
-        self.gen = AdaINAutoEncoder(style_dim=style_dim)
-        self.gen_cyc = AdaINAutoEncoder(style_dim=style_dim)
+        # self.gen = AdaINAutoEncoder(style_dim=style_dim)
+        # self.gen_cyc = AdaINAutoEncoder(style_dim=style_dim)
+        self.gen = Generator(style_dim=style_dim, pretrained=pretrained)
+        self.gen_cyc = Generator(style_dim=style_dim, pretrained=pretrained)
         self.reg = DensityRegressor(pretrained=pretrained)
 
     def forward_dg(self, x, z1, z2, mode):
@@ -173,15 +250,20 @@ class DGVCCNet(nn.Module):
             _, f_var, _ = self.reg(x)
             _, f_gen_var, d_gen = self.reg(x_gen)
 
-            loss_cyc = F.l1_loss(x_cyc, x)
-            loss_div = -torch.clamp(F.l1_loss(x_gen, x_gen2), max=0.1)
+            loss_cyc = F.mse_loss(x, x_cyc)
+            loss_div = -torch.clamp(F.mse_loss(x_gen, x_gen2), max=1)
 
             f_var_ = f_var.view(f_var.size(0), f_var.size(1), -1)
             f_gen_var_ = f_gen_var.view(f_gen_var.size(0), f_gen_var.size(1), -1)
 
-            sim_var = torch.bmm(f_var_.transpose(1, 2), f_gen_var_)
+            f_var_normed = f_var_ / (torch.norm(f_var_, dim=1, keepdim=True) + 1e-8)
+            f_gen_var_normed = f_gen_var_ / (torch.norm(f_gen_var_, dim=1, keepdim=True) + 1e-8)
 
-            loss_ortho = torch.sum(torch.pow(torch.diagonal(sim_var, dim1=-2, dim2=-1), 2))
+            sim_var = torch.bmm(f_var_normed.transpose(1, 2), f_gen_var_normed)
+
+            loss_ortho = torch.sum(torch.pow(torch.diagonal(sim_var, dim1=-2, dim2=-1), 2)) / sim_var.size(0)
+
+            print('loss_cyc: {:.4f}, loss_div: {:.4f}, loss_ortho: {:.4f}'.format(loss_cyc.item(), loss_div.item(), loss_ortho.item()))
 
             return d_gen, loss_cyc, loss_div, loss_ortho
         
@@ -191,15 +273,29 @@ class DGVCCNet(nn.Module):
             f_inv, f_var, d = self.reg(x)
             f_gen_inv, f_gen_var, d_gen = self.reg(x_gen)
 
-            f_inv_ = f_inv.view(f_inv.size(0), f_inv.size(1), -1)
-            f_gen_inv_ = f_gen_inv.view(f_gen_inv.size(0), f_gen_inv.size(1), -1)
+            loss_sim = F.mse_loss(f_inv, f_gen_inv)
 
-            sim_inv = torch.bmm(f_inv_.transpose(1, 2), f_gen_inv_)
+            # f_inv_ = f_inv.view(f_inv.size(0), f_inv.size(1), -1)
+            # f_gen_inv_ = f_gen_inv.view(f_gen_inv.size(0), f_gen_inv.size(1), -1)
 
-            sim_gt = torch.linspace(0, f_inv.size(2)*f_inv.size(3)-1, f_inv.size(2)*f_inv.size(3)).unsqueeze(0).repeat(f_inv.size(0), 1).to(f_inv.device)
-            loss_sim = F.cross_entropy(sim_inv, sim_gt.long())
+            # sim_inv = torch.bmm(f_inv_.transpose(1, 2), f_gen_inv_)
+
+            # sim_gt = torch.linspace(0, f_inv.size(2)*f_inv.size(3)-1, f_inv.size(2)*f_inv.size(3)).unsqueeze(0).repeat(f_inv.size(0), 1).to(f_inv.device)
+            # loss_sim = F.cross_entropy(sim_inv, sim_gt.long())
+
+            print('loss_sim: {:.4f}'.format(loss_sim.item()))
 
             return d, d_gen, loss_sim
+        
+        elif mode == 'test':
+            x_gen = self.gen(x, z1)
+            x_gen2 = self.gen(x, z2)
+            x_cyc = self.gen_cyc(x_gen)
+
+            _, _, d = self.reg(x)
+            _, _, d_gen = self.reg(x_gen)
+
+            return d, d_gen, x_gen, x_gen2, x_cyc
     
     def forward(self, x):
         return self.reg(x)[-1]

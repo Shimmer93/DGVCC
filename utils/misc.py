@@ -68,6 +68,11 @@ def denormalize(img_tensor):
     img_tensor = img_tensor + torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1).to(img_tensor.device)
     return img_tensor
 
+def denormalize2(img_tensor):
+    # denormalize a image tensor
+    img_tensor = (img_tensor - img_tensor.min() / (img_tensor.max() - img_tensor.min()))
+    return img_tensor
+
 class AverageMeter(object):
     """Computes and stores the average and current value"""
     def __init__(self):

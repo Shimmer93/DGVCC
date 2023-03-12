@@ -12,7 +12,7 @@ from rich.progress import track
 import argparse
 from math import sqrt
 
-from models.dgvccnet import DGVCCNet
+from models.dgvccnet2 import DGVCCNet2
 from losses.bl import BL
 from datasets.den_dataset import DensityMapDataset
 from datasets.bay_dataset import BayesianDataset
@@ -27,7 +27,7 @@ class DGVCCTrainer():
         # seed_everything(cfg['seed'])
 
         self.device = torch.device(device)
-        self.model = DGVCCNet(**cfg['model'])
+        self.model = DGVCCNet2(**cfg['model'])
         self.model.to(self.device)
 
         self.method = cfg['method']
@@ -62,6 +62,8 @@ class DGVCCTrainer():
         self.opt_gen_cyc = torch.optim.AdamW(self.model.gen_cyc.parameters(), **cfg['optimizer'])
         self.opt_reg = torch.optim.AdamW(self.model.reg.parameters(), **cfg['optimizer'])
 
+        self.sch_gen = torch.optim.lr_scheduler.CosineAnnealingLR(self.opt_gen, **cfg['scheduler'])
+        self.sch_gen_cyc = torch.optim.lr_scheduler.CosineAnnealingLR(self.opt_gen_cyc, **cfg['scheduler'])
         self.sch_reg = torch.optim.lr_scheduler.CosineAnnealingLR(self.opt_reg, **cfg['scheduler'])
 
     def log(self, msg, verbose=True, **kwargs):
@@ -70,7 +72,7 @@ class DGVCCTrainer():
         with open(os.path.join(self.log_dir, 'log.txt'), 'a') as f:
             f.write(msg + '\n')
 
-    def compute_loss(self, pred_dmaps, gt_datas):
+    def compute_count_loss(self, pred_dmaps, gt_datas):
         if self.method == 'Density':
             _, gt_dmaps = gt_datas
             gt_dmaps = gt_dmaps.to(self.device)
@@ -86,15 +88,57 @@ class DGVCCTrainer():
             raise NotImplementedError
 
         return loss
+    
+    def compute_count_loss_final(self, pred_dmaps, gt_datas):
+        if self.method == 'Density':
+            _, gt_dmaps = gt_datas
+            gt_dmaps = gt_dmaps.to(self.device)
+            gt_dmaps = gt_dmaps.repeat(2, 1, 1, 1)
+            loss = self.den_loss(pred_dmaps, gt_dmaps * self.log_para)
+        
+        else:
+            raise NotImplementedError
 
-    def train_reg_step(self, batch):
+        return loss
+    
+    def train_den_step(self, batch):
         imgs, gt_datas = batch
         imgs = imgs.to(self.device)
 
         self.opt_reg.zero_grad()
 
-        pred_dmaps = self.model(imgs)
-        loss = self.compute_loss(pred_dmaps, gt_datas)
+        pred_dmaps = self.model.forward_den(imgs)
+        loss = self.compute_count_loss(pred_dmaps, gt_datas)
+        loss.backward()
+
+        self.opt_reg.step()
+
+        return loss.item()
+    
+    def train_rec_step(self, batch):
+        imgs, _ = batch
+        imgs = imgs.to(self.device)
+
+        self.opt_gen.zero_grad()
+
+        _, loss = self.model.forward_rec(imgs)
+        loss.backward()
+
+        self.opt_gen.step()
+
+        return loss.item()
+    
+    def train_final_step(self, batch):
+        imgs, gt_datas = batch
+        imgs = imgs.to(self.device)
+        z1 = torch.randn(imgs.size(0), 64, device=self.device)
+        z2 = torch.randn(imgs.size(0), 64, device=self.device)
+
+        self.opt_reg.zero_grad()
+
+        d_cat = self.model.forward_dg(imgs, z1, z2, mode='reg_final')
+        loss = self.compute_count_loss_final(d_cat, gt_datas)
+
         loss.backward()
 
         self.opt_reg.step()
@@ -107,35 +151,40 @@ class DGVCCTrainer():
         z1 = torch.randn(imgs.size(0), 64, device=self.device)
         z2 = torch.randn(imgs.size(0), 64, device=self.device)
 
-        # train regressor
-        self.opt_reg.zero_grad()
-
-        d, d_gen, loss_sim = self.model.forward_dg(imgs, z1, z2, mode='reg')
-        loss_den = self.compute_loss(d, gt_datas)
-        loss_den_gen = self.compute_loss(d_gen, gt_datas)
-        loss_reg = loss_den + loss_den_gen + 100 * loss_sim
-        loss_reg.backward()
-
-        self.opt_reg.step()
-
         # train generator
         self.opt_gen.zero_grad()
         self.opt_gen_cyc.zero_grad()
 
         d_gen, loss_cyc, loss_div, loss_ortho = self.model.forward_dg(imgs, z1, z2, mode='gen')
-        loss_den_gen2 = self.compute_loss(d_gen, gt_datas)
-        loss_gen = 10 * loss_den_gen2 + 100 * loss_cyc + 100 * loss_div + 10 * loss_ortho
+        loss_den_gen2 = self.compute_count_loss(d_gen, gt_datas)
+        loss_gen = loss_den_gen2 + 10 * loss_cyc + 100 * loss_div + 100 * loss_ortho
         loss_gen.backward()
 
         self.opt_gen.step()
         self.opt_gen_cyc.step()
 
-        return loss_reg.item(), loss_gen.item()
+        # train regressor
+        self.opt_reg.zero_grad()
+
+        # d, d_gen, loss_sim = self.model.forward_dg(imgs, z1, z2, mode='reg')
+        # loss_den = self.compute_count_loss(d, gt_datas)
+        # loss_den_gen = self.compute_count_loss(d_gen, gt_datas)
+        # loss_reg = 20 * loss_den + 10 * loss_den_gen + 100 * loss_sim
+        d_cat, loss_sim = self.model.forward_dg(imgs, z1, z2, mode='reg')
+        loss_den_cat = self.compute_count_loss_final(d_cat, gt_datas)
+        loss_reg = loss_den_cat + 100 * loss_sim
+        loss_reg.backward()
+
+        self.opt_reg.step()
+
+        return loss_gen.item(), loss_reg.item()
     
     def val_step(self, batch):
         img, gt, name = batch
         img = img.to(self.device)
         b, _, h, w = img.shape
+        # z1 = torch.randn(img.size(0), 64, device=self.device)
+        # z2 = torch.randn(img.size(0), 64, device=self.device)
 
         assert b == 1, 'batch size should be 1 in validation'
 
@@ -145,11 +194,13 @@ class DGVCCTrainer():
             img_patches, _, _ = divide_img_into_patches(img, ps)
 
             for patch in img_patches:
-                pred = self.model(patch)
+                # _, pred, _, _, _ = self.model.forward_dg(patch, z1, z2, mode='test')
+                pred = self.model.forward_den(patch)
                 pred_count += pred.sum().cpu().item() / self.log_para
 
         else:
-            pred = self.model(img)
+            # _, pred, _, _, _ = self.model.forward_dg(img, z1, z2, mode='test')
+            pred = self.model.forward_den(img)
             pred_count = pred.sum().cpu().item() / self.log_para
 
         gt_count = gt.shape[1]
@@ -158,6 +209,28 @@ class DGVCCTrainer():
         mse = (pred_count - gt_count) ** 2
 
         return mae, mse
+    
+    def val_rec_step(self, batch):
+        img, gt, name = batch
+        img = img.to(self.device)
+        b, _, h, w = img.shape
+
+        assert b == 1, 'batch size should be 1 in validation'
+
+        ps = self.patch_size
+        if h >= ps or w >= ps:
+            loss = 0
+            img_patches, _, _ = divide_img_into_patches(img, ps)
+
+            for patch in img_patches:
+                _, loss_patch = self.model.forward_rec(patch)
+                loss += loss_patch.cpu().item()
+
+        else:
+            _, loss = self.model.forward_rec(img)
+            loss = loss.cpu().item()
+
+        return loss
     
     def visualize_step(self, batch):
         img, gt, name = batch
@@ -255,86 +328,136 @@ class DGVCCTrainer():
         plt.savefig(os.path.join(self.vis_dir, '{}.png'.format(name[0])))
         plt.close()
 
-    def train_epoch(self, epoch, only_reg=False):
+    def train_epoch(self, epoch, mode='dg'):
         start_time = time.time()
 
         # training
         self.model.train()
-        loss_reg_meter = AverageMeter()
         loss_gen_meter = AverageMeter()
+        loss_reg_meter = AverageMeter()
         for batch in track(self.train_loader, description='Epoch: {}, Training...'.format(epoch), complete_style='dim cyan', total=len(self.train_loader)):
-            if only_reg:
-                loss = self.train_reg_step(batch)
+            if mode == 'den':
+                loss = self.train_den_step(batch)
+                loss_reg_meter.update(loss)
+            elif mode == 'rec':
+                loss = self.train_rec_step(batch)
+                loss_gen_meter.update(loss)
+            elif mode == 'final':
+                loss = self.train_final_step(batch)
                 loss_reg_meter.update(loss)
             else:
                 losses = self.train_step(batch)
-                loss_reg_meter.update(losses[0])
-                loss_gen_meter.update(losses[1])
-        if only_reg:
+                loss_gen_meter.update(losses[0])
+                loss_reg_meter.update(losses[1])
+        if mode in ['den', 'final']:
             print('Epoch: {}, Loss: {:.4f}'.format(epoch, loss_reg_meter.avg))
+        elif mode == 'rec':
+            print('Epoch: {}, Loss: {:.4f}'.format(epoch, loss_gen_meter.avg))
         else:
-            print('Epoch: {}, Loss_reg: {:.4f}, Loss_gen: {:.4f}'.format(epoch, loss_reg_meter.avg, loss_gen_meter.avg))
+            print('Epoch: {}, Loss_gen: {:.4f}, Loss_reg: {:.4f}'.format(epoch, loss_gen_meter.avg, loss_reg_meter.avg))
 
         self.sch_reg.step()
+        self.sch_gen.step()
+        self.sch_gen_cyc.step()
 
         # validation
         self.model.eval()
-        mae_meter = AverageMeter()
-        mse_meter = AverageMeter()
-        with torch.no_grad():
-            for batch in track(self.val_loader, description='Epoch: {}, Validating...'.format(epoch), complete_style='dim cyan', total=len(self.val_loader)):
-                mae, mse = self.val_step(batch)
-                mae_meter.update(mae)
-                mse_meter.update(mse)
+        if mode == 'rec':
+            loss_rec_meter = AverageMeter()
+            with torch.no_grad():
+                for batch in track(self.val_loader, description='Epoch: {}, Validating...'.format(epoch), complete_style='dim cyan', total=len(self.val_loader)):
+                    loss = self.val_rec_step(batch)
+                    loss_rec_meter.update(loss)
+            loss_rec = loss_rec_meter.avg
 
-        mae = mae_meter.avg
-        mse = sqrt(mse_meter.avg)
+            duration = time.time() - start_time
+            self.log('Epoch: {}, Loss_rec: {:.4f}, Time: {:.2f}s'.format(epoch, loss_rec, duration))
+            return loss_rec
+        
+        else:
+            mae_meter = AverageMeter()
+            mse_meter = AverageMeter()
+            with torch.no_grad():
+                for batch in track(self.val_loader, description='Epoch: {}, Validating...'.format(epoch), complete_style='dim cyan', total=len(self.val_loader)):
+                    mae, mse = self.val_step(batch)
+                    mae_meter.update(mae)
+                    mse_meter.update(mse)
 
-        duration = time.time() - start_time
+            mae = mae_meter.avg
+            mse = sqrt(mse_meter.avg)
 
-        self.log('Epoch: {}, MAE: {:.2f}, MSE: {:.2f}, Time: {:.2f}s'.format(epoch, mae, mse, duration))
-
-        return mae, mse
+            duration = time.time() - start_time
+            self.log('Epoch: {}, MAE: {:.2f}, MSE: {:.2f}, Time: {:.2f}s'.format(epoch, mae, mse, duration))
+            return mae, mse
     
-    def train(self, only_reg=False, ckpt=None):
+    def train(self, mode='dg', gen_ckpt=None, reg_ckpt=None, all_ckpt=None):
         self.log('Start training at {}'.format(time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())))
-        self.load_ckpt(ckpt)
+        self.load_ckpts(gen_ckpt, reg_ckpt, all_ckpt)
 
-        best_mae = 1e10
-        best_epoch = 0
-        for epoch in range(self.num_epochs):
-            mae, mse = self.train_epoch(epoch, only_reg=only_reg)
-            if mae < best_mae:
-                best_mae = mae
-                best_epoch = epoch
-                torch.save(self.model.state_dict(), os.path.join(self.log_dir, 'best.pth'))
-                self.log('Epoch: {}, Best model saved.'.format(epoch))
-            torch.save(self.model.state_dict(), os.path.join(self.log_dir, 'last.pth'))
+        if mode == 'rec':
+            best_loss = 1e10
+            best_epoch = 0
+            for epoch in range(self.num_epochs):
+                loss = self.train_epoch(epoch, mode)
+                if loss < best_loss:
+                    best_loss = loss
+                    best_epoch = epoch
+                    self.model.save_sd(os.path.join(self.log_dir, 'best.pth'), mode='gen')
+                    self.log('Epoch: {}, Best model saved.'.format(epoch))
+                self.model.save_sd(os.path.join(self.log_dir, 'last.pth'), mode='gen')
+            self.log('Best Loss: {:.4f} at epoch {}'.format(best_loss, best_epoch))
 
-        self.log('Best MAE: {:.2f} at epoch {}'.format(best_mae, best_epoch))
+        else:
+            best_mae = 1e10
+            best_epoch = 0
+            for epoch in range(self.num_epochs):
+                mae, _ = self.train_epoch(epoch, mode)
+                if mae < best_mae:
+                    best_mae = mae
+                    best_epoch = epoch
+                    self.model.save_sd(os.path.join(self.log_dir, 'best.pth'), mode='reg' if mode == 'den' else 'all')
+                    self.log('Epoch: {}, Best model saved.'.format(epoch))
+                self.model.save_sd(os.path.join(self.log_dir, 'last.pth'), mode='reg' if mode == 'den' else 'all')
+            self.log('Best MAE: {:.2f} at epoch {}'.format(best_mae, best_epoch))
+
         self.log('End training at {}'.format(time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())))
 
-    def test(self, ckpt=None):
-        self.load_ckpt(ckpt)
+    def test(self, mode, gen_ckpt=None, reg_ckpt=None, all_ckpt=None):
+        self.log('Testing...')
+        self.load_ckpts(gen_ckpt, reg_ckpt, all_ckpt)
 
         self.model.eval()
-        mae_meter = AverageMeter()
-        mse_meter = AverageMeter()
-        with torch.no_grad():
-            for batch in track(self.test_loader, description='Testing...', complete_style='dim cyan', total=len(self.test_loader)):
-                mae, mse = self.val_step(batch)
-                mae_meter.update(mae)
-                mse_meter.update(mse)
+        if mode == 'rec':
 
-        mae = mae_meter.avg
-        mse = sqrt(mse_meter.avg)
+            loss_rec_meter = AverageMeter()
+            with torch.no_grad():
+                for batch in track(self.test_loader, description='Testing...', complete_style='dim cyan', total=len(self.test_loader)):
+                    loss = self.val_rec_step(batch)
+                    loss_rec_meter.update(loss)
+            loss_rec = loss_rec_meter.avg
 
-        self.log('Test MAE: {:.2f}, MSE: {:.2f}'.format(mae, mse))
+            self.log('Test Loss: {:.4f}'.format(loss_rec))
+        
+        else:
+            mae_meter = AverageMeter()
+            mse_meter = AverageMeter()
+            with torch.no_grad():
+                for batch in track(self.test_loader, description='Testing...', complete_style='dim cyan', total=len(self.test_loader)):
+                    mae, mse = self.val_step(batch)
+                    mae_meter.update(mae)
+                    mse_meter.update(mse)
 
-    def visualize(self, only_reg=False, ckpt=None):
-        print('Visualizing...')
-        self.load_ckpt(ckpt)
-        print('What is the problem?')
+            mae = mae_meter.avg
+            mse = sqrt(mse_meter.avg)
+
+            self.log('Test MAE: {:.2f}, MSE: {:.2f}'.format(mae, mse))
+
+    def visualize(self, mode, gen_ckpt=None, reg_ckpt=None, all_ckpt=None):
+        self.log('Visualizing...')
+        self.load_ckpts(gen_ckpt, reg_ckpt, all_ckpt)
+
+        if mode == 'rec':
+            raise NotImplementedError
 
         self.vis_dir = os.path.join(self.log_dir, 'vis')
         if not os.path.exists(self.vis_dir):
@@ -343,17 +466,24 @@ class DGVCCTrainer():
         self.model.eval()
         with torch.no_grad():
             for batch in track(self.test_loader, description='Visualizing...', complete_style='dim cyan', total=len(self.test_loader)):
-                if only_reg:
+                if mode in ['den', 'final']:
                     self.visualize_reg_step(batch)
                 else:
                     self.visualize_step(batch)
 
         self.log('Visualized results saved to {}'.format(self.vis_dir))
 
-    def load_ckpt(self, ckpt):
-        if ckpt is not None:
-            self.model.load_state_dict(torch.load(ckpt, map_location=self.device), strict=True)
-            self.log('Model loaded from {}'.format(ckpt))
+    def load_ckpts(self, gen_ckpt=None, reg_ckpt=None, all_ckpt=None):
+        if gen_ckpt is not None:
+            self.model.load_sd(gen_ckpt, 'gen', device=self.device)
+            self.model.load_sd(gen_ckpt, 'gen_cyc', device=self.device)
+            self.log('Generator loaded from {}'.format(gen_ckpt))
+        if reg_ckpt is not None:
+            self.model.load_sd(reg_ckpt, 'reg', device=self.device)
+            self.log('Density Regressor loaded from {}'.format(reg_ckpt))
+        if all_ckpt is not None:
+            self.model.load_sd(all_ckpt, 'all', device=self.device)
+            self.log('Model loaded from {}'.format(all_ckpt))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -362,14 +492,16 @@ if __name__ == '__main__':
     parser.add_argument('--vis', action='store_true', default=False)
     parser.add_argument('--config', type=str, metavar='PATH')
     parser.add_argument('--device', type=str, default='cuda:0')
-    parser.add_argument('--ckpt', type=str, metavar='PATH')
-    parser.add_argument('--only_reg', action='store_true', default=False)
+    parser.add_argument('--mode', type=str, default='dg', choices=['rec', 'den', 'dg', 'final'])
+    parser.add_argument('--gen_ckpt', type=str, metavar='PATH')
+    parser.add_argument('--reg_ckpt', type=str, metavar='PATH')
+    parser.add_argument('--all_ckpt', type=str, metavar='PATH')
     args = parser.parse_args()
 
     trainer = DGVCCTrainer(args.config, args.device)
     if args.train:
-        trainer.train(only_reg=args.only_reg, ckpt=args.ckpt)
-    elif args.test:
-        trainer.test(ckpt=args.ckpt)
-    elif args.vis:
-        trainer.visualize(only_reg=args.only_reg, ckpt=args.ckpt)
+        trainer.train(args.mode, args.gen_ckpt, args.reg_ckpt, args.all_ckpt)
+    if args.test:
+        trainer.test(args.mode, args.gen_ckpt, args.reg_ckpt, args.all_ckpt)
+    if args.vis:
+        trainer.visualize(args.mode, args.gen_ckpt, args.reg_ckpt, args.all_ckpt)

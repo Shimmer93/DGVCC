@@ -10,6 +10,14 @@ from datasets.base_dataset import BaseDataset
 from utils.misc import random_crop, cal_inner_area, get_padding
 
 class BayesianDataset(BaseDataset):
+    def collate(batch):
+        transposed_batch = list(zip(*batch))
+        images = torch.stack(transposed_batch[0], 0)
+        points = transposed_batch[1]  # the number of points is not fixed, keep it as a list of tensor
+        targets = transposed_batch[2]
+        st_sizes = torch.FloatTensor(transposed_batch[3])
+        return images, (points, targets, st_sizes)
+
     def __init__(self, root, crop_size, downsample, method, is_grey, unit_size, pre_resize=1):
         super().__init__(root, crop_size, downsample, method, is_grey, unit_size, pre_resize)
 
@@ -22,7 +30,7 @@ class BayesianDataset(BaseDataset):
         dists = self._cal_dists(gt)
         
         if self.method == 'train':
-            return tuple(self._train_transform(img, gt, dists))
+            return self._train_transform(img, gt, dists)
         elif self.method in ['val', 'test']:
             name = img_fn.split('/')[-1].split('.')[0]
             return self._val_transform(img, gt, name)
