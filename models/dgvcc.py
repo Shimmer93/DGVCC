@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import models
+from enum import Enum
 
 class ConvBlock(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=False, bn=False, relu=True):
@@ -19,7 +20,7 @@ class ConvBlock(nn.Module):
         return y
 
 def upsample(x, scale_factor=2):
-    return F.interpolate(x, scale_factor=scale_factor, mode='nearest')
+    return F.interpolate(x, scale_factor=scale_factor, mode='bilinear', align_corners=False)
 
 class AdaIN2d(nn.Module):
     def __init__(self, style_dim, num_features):
@@ -31,8 +32,7 @@ class AdaIN2d(nn.Module):
         h = h.view(h.size(0), h.size(1), 1, 1)
         gamma, beta = torch.chunk(h, chunks=2, dim=1)
         return (1 + gamma) * self.norm(x) + beta
-        #return (1+gamma)*(x)+beta
-
+    
 class Generator(nn.Module):
     def __init__(self, style_dim=64, pretrained=True):
         super().__init__()
@@ -88,6 +88,8 @@ class Generator(nn.Module):
 
         x = self.head(x) # 3
 
+        x = torch.clamp(x, -1, 1)
+
         return x
     
 class DensityRegressor(nn.Module):
@@ -126,6 +128,8 @@ class DensityRegressor(nn.Module):
         x2 = self.stage2(x1)
         x3 = self.stage3(x2)
 
+        y_var = x3
+
         x = self.dec3(x3)
         y3 = x
         x = upsample(x, scale_factor=2)
@@ -142,118 +146,111 @@ class DensityRegressor(nn.Module):
         y2 = upsample(y2, scale_factor=2)
         y3 = upsample(y3, scale_factor=4)
 
-        y_var = torch.cat([y1, y2, y3], dim=1)
+        y_cat = torch.cat([y1, y2, y3], dim=1)
 
-        y_inv = self.var_to_inv(y_var)
+        y_inv = self.var_to_inv(y_cat)
 
         y = self.final_layer(y_inv)
+        y = upsample(y, scale_factor=4)
 
         return y_var, y_inv, y
 
-class DGVCCNet2(nn.Module):
+class ModelComponent(Enum):
+    GENERATOR = 1
+    GENERATOR_CYCLIC = 2
+    REGRESSOR = 3
+    ALL = 4
+
+class DGVCCModel(nn.Module):
     def __init__(self, style_dim=64, pretrained=True):
         super().__init__()
-        self.gen = Generator(style_dim=style_dim, pretrained=pretrained)
-        self.gen_cyc = Generator(style_dim=style_dim, pretrained=pretrained)
-        self.reg = DensityRegressor(pretrained=pretrained)
+        self.gen = Generator(style_dim, pretrained)
+        self.gen_cyc = Generator(style_dim, pretrained)
+        self.reg = DensityRegressor(pretrained)
 
-    def forward_rec(self, x):
+    def forward_generator(self, x):
         x_rec = self.gen(x)
         loss_rec = F.mse_loss(x_rec, x)
         return x_rec, loss_rec
-
-    def forward_den(self, x):
-        _, _, den = self.reg(x)
-        return den
     
-    def forward_dg(self, x, z1, z2, mode):
-        if mode == 'gen':
-            x_gen = self.gen(x, z1)
+    def forward_regressor(self, x):
+        _, _, d = self.reg(x)
+        return d
+    
+    def forward_joint(self, x, z1, z2):
+        x_gen = self.gen(x, z1)
+        x_gen2 = self.gen(x, z2)
+        x_cyc = self.gen_cyc(x_gen)
+
+        x_cat = torch.cat([x, x_gen])
+        f_inv_cat, f_var_cat, d_cat = self.reg(x_cat)
+        f_inv = f_inv_cat[:x.shape[0]]
+        f_gen_inv = f_inv_cat[x.shape[0]:]
+        f_var = f_var_cat[:x.shape[0]]
+        f_gen_var = f_var_cat[x.shape[0]:]
+
+        loss_cyc = F.mse_loss(x, x_cyc)
+        loss_div = -torch.clamp(F.mse_loss(x_gen, x_gen2), max=0.5)
+
+        loss_sim = F.mse_loss(f_inv, f_gen_inv)
+        loss_dissim = torch.mean(f_var * f_gen_var)
+
+        return d_cat, loss_cyc, loss_div, loss_sim, loss_dissim
+    
+    def forward_augmented(self, x, z1, z2, z3):
+        self.gen.eval()
+        with torch.no_grad():
+            x_gen1 = self.gen(x, z1)
             x_gen2 = self.gen(x, z2)
-            x_cyc = self.gen_cyc(x_gen)
+            x_gen3 = self.gen(x, z3)
+        x_cat = torch.cat([x, x_gen1, x_gen2, x_gen3])
+        _, _, d_cat = self.reg(x_cat)
 
-            x_cat = torch.cat([x, x_gen])
-            _, f_var_cat, d_cat = self.reg(x_cat)
-            f_var = f_var_cat[:x.shape[0]]
-            f_gen_var = f_var_cat[x.shape[0]:]
-            d_gen = d_cat[x.shape[0]:]
-            # _, f_var, _ = self.reg(x)
-            # _, f_gen_var, d_gen = self.reg(x_gen)
+        return x_cat, d_cat
+    
+    def forward_test(self, x, z1, z2):
+        x_gen = self.gen(x, z1)
+        x_gen2 = self.gen(x, z2)
+        x_cyc = self.gen_cyc(x_gen)
 
-            loss_cyc = F.mse_loss(x, x_cyc)
-            loss_div = -torch.clamp(F.mse_loss(x_gen, x_gen2), max=1)
+        _, _, d = self.reg(x)
+        _, _, d_gen = self.reg(x_gen)
 
-            loss_dissim = -torch.clamp(F.mse_loss(f_var, f_gen_var), max=10)
+        return d, d_gen, x_gen, x_gen2, x_cyc
+    
+    def get_params(self, component):
+        if component == ModelComponent.GENERATOR:
+            return self.gen.parameters()
+        elif component == ModelComponent.GENERATOR_CYCLIC:
+            return self.gen_cyc.parameters()
+        elif component == ModelComponent.REGRESSOR:
+            return self.reg.parameters()
+        elif component == ModelComponent.ALL:
+            return self.parameters()
+        else:
+            raise ValueError('Invalid component')
 
-            print('loss_cyc: {:.4f}, loss_div: {:.4f}, loss_dissim: {:.4f}'.format(loss_cyc.item(), loss_div.item(), loss_dissim.item()))
-
-            return d_gen, loss_cyc, loss_div, loss_dissim
-        
-        elif mode == 'reg':
-            x_gen = self.gen(x, z1)
-
-            x_cat = torch.cat([x, x_gen], dim=0)
-            _, f_var_cat, d_cat = self.reg(x_cat)
-            f_var = f_var_cat[:x.shape[0]]
-            f_gen_var = f_var_cat[x.shape[0]:]
-
-            # f_inv, f_var, d = self.reg(x)
-            # f_gen_inv, f_gen_var, d_gen = self.reg(x_gen)
-
-            loss_sim = F.mse_loss(f_var, f_gen_var)
-
-            print('loss_sim: {:.4f}'.format(loss_sim.item()))
-
-            # return d, d_gen, loss_sim
-            return d_cat, loss_sim
-        
-        elif mode == 'reg_final':
-            self.gen.eval()
-            with torch.no_grad():
-                x_gen = self.gen(x, z1).detach()
-
-            x_cat = torch.cat([x, x_gen], dim=0)
-            _, _, d_cat = self.reg(x_cat)
-
-            return d_cat
-        
-        elif mode == 'test':
-            x_gen = self.gen(x, z1)
-            x_gen2 = self.gen(x, z2)
-            x_cyc = self.gen_cyc(x_gen)
-
-            _, _, d = self.reg(x)
-            _, _, d_gen = self.reg(x_gen)
-
-            return d, d_gen, x_gen, x_gen2, x_cyc
-
-    def load_sd(self, sd_path, mode, device):
+    def load_sd(self, sd_path, component, device):
         sd = torch.load(sd_path, map_location=device)
-        if mode == 'gen':
+        if component == ModelComponent.GENERATOR:
             self.gen.load_state_dict(sd)
-        elif mode == 'gen_cyc':
+        elif component == ModelComponent.GENERATOR_CYCLIC:
             self.gen_cyc.load_state_dict(sd)
-        elif mode == 'reg':
+        elif component == ModelComponent.REGRESSOR:
             self.reg.load_state_dict(sd)
-        elif mode == 'all':
-            # from collections import OrderedDict
-            # new_sd = OrderedDict()
-            # for k, v in sd.items():
-            #     if k.startswith('gen.'):
-            #         new_sd[k[4:]] = v
-            # self.gen.load_state_dict(new_sd)
+        elif component == ModelComponent.ALL:
             self.load_state_dict(sd)
         else:
-            raise ValueError('Invalid mode')
+            raise ValueError('Invalid component')
         
-    def save_sd(self, sd_path, mode):
-        if mode == 'gen':
+    def save_sd(self, sd_path, component):
+        if component == ModelComponent.GENERATOR:
             torch.save(self.gen.state_dict(), sd_path)
-        elif mode == 'gen_cyc':
+        elif component == ModelComponent.GENERATOR_CYCLIC:
             torch.save(self.gen_cyc.state_dict(), sd_path)
-        elif mode == 'reg':
+        elif component == ModelComponent.REGRESSOR:
             torch.save(self.reg.state_dict(), sd_path)
-        elif mode == 'all':
+        elif component == ModelComponent.ALL:
             torch.save(self.state_dict(), sd_path)
         else:
-            raise ValueError('Invalid mode')
+            raise ValueError('Invalid component')

@@ -1,30 +1,31 @@
 seed: 2112
-num_epochs: &num_epochs 10
+method: Density
+mode: JOINT
+num_epochs: &num_epochs 300
 batch_size: 16
 num_workers: 16
-log_para: 100
-patch_size: 3584
-version: test
+log_para: 1000
+version: sta_reg_eqsize3
 model:
   style_dim: 64
   pretrained: True
 train_dataset:
   root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/sta'
   crop_size: 256
-  downsample: 4
+  downsample: 1
   is_grey: False
   unit_size: 16
   pre_resize: 1
 test_dataset:
   root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/stb'
   crop_size: 256
-  downsample: 4
+  downsample: 1
   is_grey: False
   unit_size: 16
   pre_resize: 1
 optimizer:
   lr: 0.0001
+  weight_decay: 0.0001
 scheduler:
-  T_max: *num_epochs
-  eta_min: 0
-  last_epoch: -1
+  step_size: 1
+  gamma: 0.995

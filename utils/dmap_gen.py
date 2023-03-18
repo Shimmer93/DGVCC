@@ -75,8 +75,8 @@ def gaussian_filter_density_fixed(img, points):
             pt2d[int(pt[1]),int(pt[0])] = 1.
         else:
             continue
-        sigma = 15 #np.average(np.array(gt.shape))/2./2. #case: 1 point
-        density += gaussian_filter(pt2d, sigma, mode='constant')
+        sigma = 4 #np.average(np.array(gt.shape))/2./2. #case: 1 point
+        density += gaussian_filter(pt2d, sigma, truncate=7/sigma, mode='constant')
     #print ('done.')
     return density
 

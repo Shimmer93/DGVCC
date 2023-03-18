@@ -40,7 +40,7 @@ class DensityMapDataset(BaseDataset):
 
         if self.method == 'train':
             if self.gt_dir is None:
-                dmap_fn = gt_fn.replace(basename, basename + '_dmap')
+                dmap_fn = gt_fn.replace(basename, basename + '_dmap2')
             else:
                 dmap_fn = os.path.join(self.gt_dir, basename + '.npy')
             dmap = self._load_dmap(dmap_fn)
