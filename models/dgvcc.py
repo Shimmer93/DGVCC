@@ -153,7 +153,7 @@ class DensityRegressor(nn.Module):
         y = self.final_layer(y_inv)
         y = upsample(y, scale_factor=4)
 
-        return y_var, y_inv, y
+        return y_inv, y_cat, y
 
 class ModelComponent(Enum):
     GENERATOR = 1
@@ -183,6 +183,7 @@ class DGVCCModel(nn.Module):
         x_cyc = self.gen_cyc(x_gen)
 
         x_cat = torch.cat([x, x_gen])
+        # f_var_cat, f_inv_cat, d_cat = self.reg(x_cat)
         f_inv_cat, f_var_cat, d_cat = self.reg(x_cat)
         f_inv = f_inv_cat[:x.shape[0]]
         f_gen_inv = f_inv_cat[x.shape[0]:]

@@ -1,11 +1,11 @@
 seed: 2112
 method: Density
 mode: AUGMENTED
-num_epochs: &num_epochs 300
+num_epochs: &num_epochs 1000
 batch_size: 8
 num_workers: 16
 log_para: 1000
-version: sta_augmented2
+version: sta_augmented_maxmae
 model:
   style_dim: 64
   pretrained: True
@@ -17,7 +17,7 @@ train_dataset:
   unit_size: 16
   pre_resize: 1
 test_dataset:
-  root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/qnrf'
+  root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/stb'
   crop_size: 256
   downsample: 1
   is_grey: False

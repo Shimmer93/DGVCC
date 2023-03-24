@@ -5,7 +5,7 @@ num_epochs: &num_epochs 300
 batch_size: 16
 num_workers: 16
 log_para: 1000
-version: sta_reg_eqsize3
+version: sta_gen_mask2
 model:
   style_dim: 64
   pretrained: True

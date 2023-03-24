@@ -2,10 +2,10 @@ seed: 2112
 method: Density
 mode: JOINT
 num_epochs: &num_epochs 300
-batch_size: 16
-num_workers: 16
+batch_size: 8
+num_workers: 8
 log_para: 1000
-version: sta_reg_eqsize3
+version: sta_joint_maxmae
 model:
   style_dim: 64
   pretrained: True

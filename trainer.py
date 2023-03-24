@@ -81,6 +81,7 @@ class DGVCCTrainer():
 
         self.opt = torch.optim.AdamW(self.model.get_params(ModelComponent.REGRESSOR if self.mode == DGMode.AUGMENTED else self.component), **cfg['optimizer'])
         self.sch = torch.optim.lr_scheduler.StepLR(self.opt, **cfg['scheduler'])
+        # self.sch = torch.optim.lr_scheduler.CosineAnnealingLR(self.opt, **cfg['scheduler'])
 
     def log(self, msg, verbose=True, **kwargs):
         if verbose:
@@ -258,7 +259,7 @@ class DGVCCTrainer():
             plt.close()
         
         elif self.mode == DGMode.JOINT:
-            pred_dmap, pred_dmap_gen, img_gen, img_gen2, img_cyc = self.model.forward_test(img)
+            pred_dmap, pred_dmap_gen, img_gen, img_gen2, img_cyc = self.model.forward_test(img, self.fixed_z1, self.fixed_z2)
             pred_count = pred_dmap.sum().cpu().item() / self.log_para
             pred_count_gen = pred_dmap_gen.sum().cpu().item() / self.log_para
             gt_count = gt.shape[1]
