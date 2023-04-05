@@ -1,24 +1,24 @@
-seed: 2112
+seed: 1293
 method: Density
 mode: JOINT
 num_epochs: &num_epochs 300
 batch_size: 8
 num_workers: 8
 log_para: 1000
-version: sta_joint_maxmae
+version: sta_joint_nocheat2
 model:
   style_dim: 64
   pretrained: True
 train_dataset:
   root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/sta'
-  crop_size: 256
+  crop_size: 320
   downsample: 1
   is_grey: False
   unit_size: 16
   pre_resize: 1
 test_dataset:
   root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/stb'
-  crop_size: 256
+  crop_size: 320
   downsample: 1
   is_grey: False
   unit_size: 16

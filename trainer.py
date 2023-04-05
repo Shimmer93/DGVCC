@@ -12,11 +12,14 @@ from rich.progress import track
 import argparse
 from math import sqrt
 from enum import Enum
+from PIL import Image
 
 from models.dgvcc import DGVCCModel, ModelComponent
 from losses.bl import BL
+from losses.triplet import triplet_loss
 from datasets.den_dataset import DensityMapDataset
 from datasets.bay_dataset import BayesianDataset
+from datasets.den_aux_dataset import DensityMapAuxDataset
 
 from utils.misc import divide_img_into_patches, denormalize, AverageMeter, seed_everything, get_current_datetime
 
@@ -30,12 +33,14 @@ class DGVCCTrainer():
     def __init__(self, config, device):
         with open(config, 'r') as f:
             cfg = yaml.load(f, Loader=yaml.SafeLoader)
-
-        seed_everything(cfg['seed'])
+        self.cfg = cfg
 
         self.device = torch.device(device)
         self.model = DGVCCModel(**cfg['model'])
         self.model.to(self.device)
+
+        self.seed = cfg['seed']
+        seed_everything(self.seed)
 
         self.fixed_z1 = torch.randn(1, 64, device=self.device)
         self.fixed_z2 = torch.randn(1, 64, device=self.device)
@@ -57,17 +62,23 @@ class DGVCCTrainer():
         elif self.method == 'Bayesian':
             self.den_loss = BL(**cfg['bl_loss'])
             DatasetType = BayesianDataset
+        elif self.method == 'Aux':
+            self.den_loss = nn.MSELoss()
+            DatasetType = DensityMapAuxDataset
         else:
             raise NotImplementedError
         
         train_dataset = DatasetType(method='train', **cfg['train_dataset'])
-        val_dataset = DatasetType(method='test', **cfg['train_dataset'])
+        val_dataset = DatasetType(method='val', **cfg['train_dataset'])
         test_dataset = DatasetType(method='test', **cfg['test_dataset'])
+        gen_dataset = DatasetType(method='train', **cfg['train_dataset'])
+        gen_dataset.method = 'test'
         collate_fn = DatasetType.collate
             
         self.train_loader = DataLoader(train_dataset, batch_size=cfg['batch_size'], shuffle=True, num_workers=cfg['num_workers'], pin_memory=True, collate_fn=collate_fn)
         self.val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=cfg['num_workers'], pin_memory=False)
         self.test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=cfg['num_workers'], pin_memory=False)
+        self.gen_loader = DataLoader(gen_dataset, batch_size=1, shuffle=False, num_workers=cfg['num_workers'], pin_memory=False)
 
         self.downsample = cfg['train_dataset']['downsample']
         self.num_epochs = cfg['num_epochs']
@@ -113,6 +124,11 @@ class DGVCCTrainer():
             targs = [targ.to(self.device) for targ in targs]
             st_sizes = st_sizes.to(self.device)
             loss = self.den_loss(gts, st_sizes, targs, pred_dmaps)
+
+        elif self.method == 'Aux':
+            _, gt_dmaps, _ = gt_datas
+            gt_dmaps = gt_dmaps.to(self.device)
+            loss = self.den_loss(pred_dmaps, gt_dmaps * self.log_para)
         
         else:
             raise NotImplementedError
@@ -126,6 +142,19 @@ class DGVCCTrainer():
             gt_dmaps = gt_dmaps.to(self.device)
             gt_dmaps = gt_dmaps.repeat(num_dmaps, 1, 1, 1)
             loss = self.den_loss(pred_dmaps, gt_dmaps * self.log_para)
+
+            # bs_nd, _, h, w = pred_dmaps.shape
+            # bs = bs_nd // num_dmaps
+            # loss_maps = torch.zeros((bs, num_dmaps, h, w)).to(self.device)
+            # pred_dmaps_split = torch.split(pred_dmaps, bs, dim=0)
+            # for i, pred_dmap in enumerate(pred_dmaps_split):
+            #     loss_maps[:, i:i+1, ...] += F.mse_loss(pred_dmap, gt_dmaps * self.log_para, reduction='none')
+            # var_maps = 0.05 * torch.std(loss_maps, dim=1, unbiased=False, keepdim=True).detach()
+            # # var_maps_median = torch.median(var_maps.reshape(bs, 1, -1), dim=2, keepdim=True)[0].reshape(bs, 1, 1, 1)
+            # # var_maps /= torch.median(var_maps.detach().reshape(bs, 1, -1), dim=2, keepdim=True)[0].reshape(bs, 1, 1, 1)
+            # # print(f'max: {torch.max(var_maps).detach().cpu().item()}, min: {torch.min(var_maps).detach().cpu().item()}')
+            # loss = torch.mean(((var_maps+1) * loss_maps))
+
         elif self.method == 'Bayesian':
             gts, targs, st_sizes = gt_datas
             gts = [gt.to(self.device) for gt in gts]
@@ -134,6 +163,26 @@ class DGVCCTrainer():
             targs = targs * num_dmaps
             st_sizes = st_sizes.repeat(num_dmaps)
             loss = self.den_loss(gts, st_sizes, targs, pred_dmaps)
+
+        elif self.method == 'Aux':
+            # weighted sum of the loss
+            _, gt_dmaps, _ = gt_datas
+            gt_dmaps = gt_dmaps.to(self.device)
+            # gt_dmaps = gt_dmaps.repeat(num_dmaps, 1, 1, 1)
+            # loss = self.den_loss(pred_dmaps, gt_dmaps * self.log_para)
+
+            bs_nd, _, h, w = pred_dmaps.shape
+            bs = bs_nd // num_dmaps
+            loss_maps = torch.zeros((bs, num_dmaps, h, w)).to(self.device)
+            pred_dmaps_split = torch.split(pred_dmaps, bs, dim=0)
+            for i, pred_dmap in enumerate(pred_dmaps_split):
+                loss_maps[:, i:i+1, ...] += F.mse_loss(pred_dmap, gt_dmaps * self.log_para, reduction='none')
+            var_maps = 0.05 * torch.std(loss_maps, dim=1, unbiased=False, keepdim=True).detach()
+            # var_maps_median = torch.median(var_maps.reshape(bs, 1, -1), dim=2, keepdim=True)[0].reshape(bs, 1, 1, 1)
+            # var_maps /= torch.median(var_maps.detach().reshape(bs, 1, -1), dim=2, keepdim=True)[0].reshape(bs, 1, 1, 1)
+            # print(f'max: {torch.max(var_maps).detach().cpu().item()}, min: {torch.min(var_maps).detach().cpu().item()}')
+            loss = torch.mean(((var_maps+1) * loss_maps))
+
         else:
             raise NotImplementedError
         
@@ -153,9 +202,64 @@ class DGVCCTrainer():
         elif self.mode == DGMode.JOINT:
             z1 = torch.randn(imgs.size(0), 64, device=self.device)
             z2 = torch.randn(imgs.size(0), 64, device=self.device)
-            d_cat, loss_cyc, loss_div, loss_sim, loss_dissim = self.model.forward_joint(imgs, z1, z2)
+            d_cat, f_cat, loss_cyc, loss_div, loss_sim, loss_dissim = self.model.forward_joint(imgs, z1, z2)
             loss_den_cat = self.compute_count_loss_with_aug(d_cat, gt_datas, num_aug_samples=1)
-            loss = loss_den_cat + 10 * loss_cyc + 10 * loss_div + 1000 * loss_sim + 100 * loss_dissim
+            loss = loss_den_cat + 10 * loss_cyc + 10 * loss_div + 100 * loss_sim + 100 * loss_dissim
+            # loss = loss_den_cat + 10 * loss_cyc + 10 * loss_div + 10 * loss_dissim
+
+            if self.method == 'Aux':
+                dmaps_aux = gt_datas[-1]
+                dmaps_aux = dmaps_aux.to(self.device)
+                b, c, h, w = dmaps_aux.shape
+                dmaps_aux = dmaps_aux.reshape([b, 1, h//4, 4, w//4, 4]).sum(dim=(3, 5))
+                bg_masks = (dmaps_aux <= 0)
+
+                gts = gt_datas[0]
+                gts = [gt.to(self.device) for gt in gts]
+                gts = [gt // 4 for gt in gts]
+                head_idxs = [(gt[:,1]*w//4 + gt[:,0]).to(torch.long) for gt in gts]
+
+                f = f_cat[:imgs.size(0)]
+                f_gen = f_cat[imgs.size(0):]
+                b, c, h, w = f.shape
+
+                f_head = []
+                f_head_gen = []
+                f_bg = []
+                f_bg_gen = []
+                for i in range(imgs.size(0)):
+                    if head_idxs[i].shape[0] == 0:
+                        continue
+                    if bg_masks[i].sum() == 0:
+                        continue
+                    num_samples = min(min(head_idxs[i].shape[0], bg_masks[i].sum()), 64)
+                    f_i = f[i].reshape(c, h*w)
+                    h_idxs = head_idxs[i][torch.randperm(head_idxs[i].shape[0])[:num_samples]]
+                    f_i_head = f_i[:, h_idxs]
+                    f_head.append(f_i_head)
+
+                    f_gen_i = f_gen[i].reshape(c, h*w)
+                    f_gen_i_head = f_gen_i[:, h_idxs]
+                    f_head_gen.append(f_gen_i_head)
+
+                    bg_idxs = torch.where(bg_masks[i].reshape(-1))[0][:num_samples]
+                    f_i_bg = f_i[:, bg_idxs]
+                    f_bg.append(f_i_bg)
+
+                    f_gen_i_bg = f_gen_i[:, bg_idxs]
+                    f_bg_gen.append(f_gen_i_bg)
+
+                if len(f_head) > 0:
+                    f_head = torch.cat(f_head, dim=1).T
+                    f_head_gen = torch.cat(f_head_gen, dim=1).T
+                    f_bg = torch.cat(f_bg, dim=1).T
+                    f_bg_gen = torch.cat(f_bg_gen, dim=1).T
+
+                    loss_trip = triplet_loss(f_head, f_head_gen, f_bg, margin=1) + triplet_loss(f_head_gen, f_head, f_bg_gen, margin=1)
+                else:
+                    loss_trip = torch.tensor(0.0, device=self.device)
+                loss += 100 * loss_trip
+
         elif self.mode == DGMode.AUGMENTED:
             z1 = torch.randn(imgs.size(0), 64, device=self.device)
             z2 = torch.randn(imgs.size(0), 64, device=self.device)
@@ -312,7 +416,23 @@ class DGVCCTrainer():
             plt.savefig(os.path.join(self.vis_dir, '{}.png'.format(name[0])))
             plt.close()
 
+    def gen_step(self, batch):
+        img, gt, name = batch
+        img = img.to(self.device)
+        b = img.shape[0]
+
+        img_cat, _ = self.model.forward_augmented(img, self.fixed_z1, self.fixed_z2, self.fixed_z3)
+        img_cat = denormalize(img_cat)
+        # img_orig = img_cat[0].cpu().permute(1, 2, 0).numpy()
+
+        for i in range(3):
+            img_gen_i = img_cat[i+1].cpu().permute(1, 2, 0).numpy()
+            img_gen_i = Image.fromarray((img_gen_i * 255).astype(np.uint8))
+            img_gen_i.save(os.path.join(self.gen_dir, '{}_{}.jpg'.format(name[0], i+1)))
+
     def train_epoch(self, epoch):
+        seed_everything(self.seed + epoch)
+
         start_time = time.time()
 
         self.model.train()
@@ -432,11 +552,29 @@ class DGVCCTrainer():
         self.log('Visualized results saved to {}'.format(self.vis_dir))
         self.log('End Visualizing at {}'.format(get_current_datetime()))
 
+    def generate(self, gen_ckpt=None, reg_ckpt=None, all_ckpt=None):
+        self.log('Start Generating at {}'.format(get_current_datetime()))
+        self.load_ckpts(gen_ckpt, reg_ckpt, all_ckpt)
+
+        self.gen_dir = os.path.join(self.log_dir, 'gen')
+        if not os.path.exists(self.gen_dir):
+            os.makedirs(self.gen_dir)
+
+        self.model.eval()
+        with torch.no_grad():
+            for batch in track(self.gen_loader, description='Generating...', 
+                               complete_style='dim cyan', total=len(self.gen_loader)):
+                self.gen_step(batch)
+
+        self.log('Generated results saved to {}'.format(self.gen_dir))
+        self.log('End Generating at {}'.format(get_current_datetime()))
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--train', action='store_true', default=False)
     parser.add_argument('--test', action='store_true', default=False)
     parser.add_argument('--vis', action='store_true', default=False)
+    parser.add_argument('--gen', action='store_true', default=False)
     parser.add_argument('--config', type=str, metavar='PATH')
     parser.add_argument('--device', type=str, default='cuda:0')
     parser.add_argument('--gen_ckpt', type=str, metavar='PATH')
@@ -451,3 +589,5 @@ if __name__ == '__main__':
         trainer.test(args.gen_ckpt, args.reg_ckpt, args.all_ckpt)
     if args.vis:
         trainer.visualize(args.gen_ckpt, args.reg_ckpt, args.all_ckpt)
+    if args.gen:
+        trainer.generate(args.gen_ckpt, args.reg_ckpt, args.all_ckpt)

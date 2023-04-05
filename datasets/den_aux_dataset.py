@@ -12,16 +12,17 @@ sys.path.append('..')
 from datasets.base_dataset import BaseDataset
 from utils.misc import random_crop, get_padding
 
-class DensityMapDataset(BaseDataset):
+class DensityMapAuxDataset(BaseDataset):
     def collate(batch):
         transposed_batch = list(zip(*batch))
         images = torch.stack(transposed_batch[0], 0)
         points = transposed_batch[1]  # the number of points is not fixed, keep it as a list of tensor
         dmaps = torch.stack(transposed_batch[2], 0)
-        return images, (points, dmaps)
+        dmaps_aux = torch.stack(transposed_batch[3], 0)
+        return images, (points, dmaps, dmaps_aux)
 
-    def __init__(self, root, crop_size, downsample, method, is_grey, unit_size, pre_resize=1, roi_map_path=None, gt_dir=None, gen_root=None):
-        super().__init__(root, crop_size, downsample, method, is_grey, unit_size, pre_resize, roi_map_path, gen_root)
+    def __init__(self, root, crop_size, downsample, method, is_grey, unit_size, pre_resize=1, roi_map_path=None, gt_dir=None):
+        super().__init__(root, crop_size, downsample, method, is_grey, unit_size, pre_resize, roi_map_path)
         self.gt_dir = gt_dir
 
     def _load_dmap(self, dmap_fn):
@@ -33,13 +34,10 @@ class DensityMapDataset(BaseDataset):
     def __getitem__(self, index):
         img_fn = self.img_fns[index]
         img, img_ext = self._load_img(img_fn)
+        gt_fn = img_fn.replace(img_ext, '.npy')
+        gt = self._load_gt(gt_fn)
 
         basename = img_fn.split('/')[-1].split('.')[0]
-        if img_fn.startswith(self.root):
-            gt_fn = img_fn.replace(img_ext, '.npy')
-        else:
-            gt_fn = os.path.join(self.root, 'train', basename[:-2] + '.npy')
-        gt = self._load_gt(gt_fn)
 
         if self.method == 'train':
             if self.gt_dir is None:
@@ -47,15 +45,17 @@ class DensityMapDataset(BaseDataset):
             else:
                 dmap_fn = os.path.join(self.gt_dir, basename + '.npy')
             dmap = self._load_dmap(dmap_fn)
-            return tuple(self._train_transform(img, gt, dmap))
+            dmap_aux = self._load_dmap(dmap_fn.replace('_dmap2', '_dmap'))
+            return tuple(self._train_transform(img, gt, dmap, dmap_aux))
         elif self.method in ['val', 'test']:
             return tuple(self._val_transform(img, gt, basename))
 
-    def _train_transform(self, img, gt, dmap):
+    def _train_transform(self, img, gt, dmap, dmap_aux):
         w, h = img.size
         assert len(gt) >= 0
 
         dmap = torch.from_numpy(dmap).unsqueeze(0)
+        dmap_aux = torch.from_numpy(dmap_aux).unsqueeze(0)
 
         # Grey Scale
         if random.random() > 0.88:
@@ -63,19 +63,20 @@ class DensityMapDataset(BaseDataset):
 
         # Resizing
         # factor = random.random() * 0.5 + 0.75
-        factor = self.pre_resize * random.random() + 0.5
+        factor = self.pre_resize * random.random() * 0.8 + 0.6
         if factor != 1.0:
             new_w = (int)(w * factor)
             new_h = (int)(h * factor)
-            # if min(new_w, new_h) >= min(self.crop_size[0], self.crop_size[1]):
-            w = new_w
-            h = new_h
-            img = img.resize((w, h))
-            dmap_sum = dmap.sum()
-            dmap = F.resize(dmap, (h, w))
-            new_dmap_sum = dmap.sum()
-            dmap = dmap * dmap_sum / new_dmap_sum
-            gt = gt * factor
+            if min(new_w, new_h) >= min(self.crop_size[0], self.crop_size[1]):
+                w = new_w
+                h = new_h
+                img = img.resize((w, h))
+                dmap_sum = dmap.sum()
+                dmap = F.resize(dmap, (h, w))
+                new_dmap_sum = dmap.sum()
+                dmap = dmap * dmap_sum / new_dmap_sum
+                dmap_aux = F.resize(dmap_aux, (h, w))
+                gt = gt * factor
         
         # Padding
         st_size = 1.0 * min(w, h)
@@ -85,6 +86,7 @@ class DensityMapDataset(BaseDataset):
 
             img = F.pad(img, padding)
             dmap = F.pad(dmap, padding)
+            dmap_aux = F.pad(dmap_aux, padding)
             if len(gt) > 0:
                 gt = gt + [left, top]
 
@@ -94,6 +96,8 @@ class DensityMapDataset(BaseDataset):
         img = F.crop(img, i, j, h, w)
         h, w = self.crop_size[0], self.crop_size[1]
         dmap = F.crop(dmap, i, j, h, w)
+        h, w = self.crop_size[0], self.crop_size[1]
+        dmap_aux = F.crop(dmap_aux, i, j, h, w)
         h, w = self.crop_size[0], self.crop_size[1]
 
         if len(gt) > 0:
@@ -108,6 +112,7 @@ class DensityMapDataset(BaseDataset):
         down_w = w // self.downsample
         down_h = h // self.downsample
         dmap = dmap.reshape([1, down_h, self.downsample, down_w, self.downsample]).sum(dim=(2, 4))
+        dmap_aux = dmap_aux.reshape([1, down_h, self.downsample, down_w, self.downsample]).sum(dim=(2, 4))
 
         if len(gt) > 0:
             gt = gt / self.downsample
@@ -116,6 +121,7 @@ class DensityMapDataset(BaseDataset):
         if random.random() > 0.5:
             img = F.hflip(img)
             dmap = F.hflip(dmap)
+            dmap_aux = F.hflip(dmap_aux)
             if len(gt) > 0:
                 gt[:, 0] = w - gt[:, 0]
         
@@ -123,12 +129,6 @@ class DensityMapDataset(BaseDataset):
         img = self.transform(img)
         gt = torch.from_numpy(gt.copy()).float()
         dmap = dmap.float()
+        dmap_aux = dmap_aux.float()
 
-        return img, gt, dmap
-
-if __name__ == '__main__':
-    dataset = DensityMapDataset('/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/fdst', 512, 4, 'train', False, 1, 0.5, gt_dir='/mnt/data/smartcity/FDST/train/ground_truth')
-
-    for i in range(10):
-        img, gt, dmap = dataset[i]
-        print(img.shape, gt.shape, dmap.shape)
+        return img, gt, dmap, dmap_aux

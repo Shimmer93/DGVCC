@@ -32,8 +32,37 @@ class AdaIN2d(nn.Module):
         h = h.view(h.size(0), h.size(1), 1, 1)
         gamma, beta = torch.chunk(h, chunks=2, dim=1)
         return (1 + gamma) * self.norm(x) + beta
-    
+
 class Generator(nn.Module):
+    def __init__(self, style_dim=64, pretrained=True):
+        super().__init__()
+        vgg = models.vgg16_bn(weights=models.VGG16_BN_Weights.DEFAULT if pretrained else None)
+        vgg_feats = list(vgg.features.children())
+        self.enc = nn.Sequential(*vgg_feats[:23])
+        # self.enc.requires_grad_(False)
+        self.adain = AdaIN2d(style_dim, 256)
+        self.dec = nn.Sequential(
+            ConvBlock(256, 256, bn=True),
+            ConvBlock(256, 256, bn=True),
+            ConvBlock(256, 256, bn=True),
+            ConvBlock(256, 128, bn=True),
+            nn.Upsample(scale_factor=2, mode='nearest'),
+            ConvBlock(128, 128, bn=True),
+            ConvBlock(128, 64, bn=True),
+            nn.Upsample(scale_factor=2, mode='nearest'),
+            ConvBlock(64, 64, bn=True),
+            ConvBlock(64, 3, kernel_size=1, padding=0, bn=False, relu=False)
+        )
+
+    def forward(self, x, z=None):
+        x = self.enc(x)
+        if z is not None:
+            x = self.adain(x, z)
+        x = self.dec(x)
+        x_new = torch.tanh(x)
+        return x_new
+
+class Generator_old(nn.Module):
     def __init__(self, style_dim=64, pretrained=True):
         super().__init__()
         vgg = models.vgg16_bn(weights=models.VGG16_BN_Weights.DEFAULT if pretrained else None)
@@ -151,6 +180,7 @@ class DensityRegressor(nn.Module):
         y_inv = self.var_to_inv(y_cat)
 
         y = self.final_layer(y_inv)
+        y = torch.relu(y)
         y = upsample(y, scale_factor=4)
 
         return y_inv, y_cat, y
@@ -196,7 +226,7 @@ class DGVCCModel(nn.Module):
         loss_sim = F.mse_loss(f_inv, f_gen_inv)
         loss_dissim = torch.mean(f_var * f_gen_var)
 
-        return d_cat, loss_cyc, loss_div, loss_sim, loss_dissim
+        return d_cat, f_inv_cat, loss_cyc, loss_div, loss_sim, loss_dissim
     
     def forward_augmented(self, x, z1, z2, z3):
         self.gen.eval()

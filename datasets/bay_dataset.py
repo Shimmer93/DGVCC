@@ -56,7 +56,7 @@ class BayesianDataset(BaseDataset):
             img = img.convert('L').convert('RGB')
 
         # Resizing
-        factor = self.pre_resize * random.random() * 0.5 + 0.75
+        factor = self.pre_resize * random.random() * 0.8 + 0.6
         new_w = (int)(w * factor)
         new_h = (int)(h * factor)
         if min(new_w, new_h) >= min(self.crop_size[0], self.crop_size[1]):

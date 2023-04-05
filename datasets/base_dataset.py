@@ -13,8 +13,9 @@ from utils.misc import random_crop, get_padding
 
 class BaseDataset(Dataset):
 
-    def __init__(self, root, crop_size, downsample, method, is_grey=False, unit_size=0, pre_resize=1, roi_map_path=None):
+    def __init__(self, root, crop_size, downsample, method, is_grey=False, unit_size=0, pre_resize=1, roi_map_path=None, gen_root=None):
         self.root = root
+        self.gen_root = gen_root
         if isinstance(crop_size, int):
             self.crop_size = (crop_size, crop_size)
         else:
@@ -51,9 +52,9 @@ class BaseDataset(Dataset):
             raise ValueError('method must be train, val or test')
         self.img_fns = glob(os.path.join(root, self.method, '*.jpg')) + \
                           glob(os.path.join(root, self.method, '*.png'))
-        if self.method == 'train':
-            self.img_fns += glob(os.path.join(root, 'val', '*.jpg')) + \
-                              glob(os.path.join(root, 'val', '*.png'))
+        if self.gen_root is not None:
+            self.img_fns += glob(os.path.join(self.gen_root, '*.jpg')) + \
+                              glob(os.path.join(self.gen_root, '*.png'))
             
         if self.method in ['val', 'test']:
             self.img_fns = sorted(self.img_fns)
@@ -78,10 +79,13 @@ class BaseDataset(Dataset):
 
     def __getitem__(self, index):
         img_fn = self.img_fns[index]
-        img, img_ext = self._load_img(img_fn)
-        gt_fn = img_fn.replace(img_ext, '.npy')
-        gt = self._load_gt(gt_fn)
         name = img_fn.split('/')[-1].split('.')[0]
+        img, img_ext = self._load_img(img_fn)
+        if img_fn.startswith(self.root):
+            gt_fn = img_fn.replace(img_ext, '.npy')
+        else:
+            gt_fn = os.path.join(self.root, 'train', name[:-2] + '.npy')
+        gt = self._load_gt(gt_fn)
         
         if self.method == 'train':
             return tuple(self._train_transform(img, gt))
