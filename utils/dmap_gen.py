@@ -84,7 +84,7 @@ def run(img_fn):
     img_ext = os.path.splitext(img_fn)[1]
     basename = os.path.basename(img_fn).replace(img_ext, '')
     gt_fn = img_fn.replace(img_ext, '.npy')
-    dmap_fn = gt_fn.replace(basename, basename + '_dmap2')
+    dmap_fn = gt_fn.replace(basename, basename + '_dmap')
 
     if os.path.exists(dmap_fn):
         return
@@ -104,7 +104,7 @@ if __name__ == '__main__':
         raise Exception("Path does not exist")
 
     img_fns = []
-    for phase in ['train', 'val']:
+    for phase in ['train']:
         img_fns += glob(os.path.join(path, phase, '*.jpg')) + \
                      glob(os.path.join(path, phase, '*.png'))
 

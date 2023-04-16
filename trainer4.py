@@ -14,7 +14,7 @@ from math import sqrt
 from enum import Enum
 from PIL import Image
 
-from models.dgvcc import DGVCCModel, ModelComponent
+from models.dgvcc4 import DGVCCModel, ModelComponent
 from losses.bl import BL
 from losses.triplet import triplet_loss
 from datasets.den_dataset import DensityMapDataset
@@ -93,6 +93,13 @@ class DGVCCTrainer():
         self.opt = torch.optim.AdamW(self.model.get_params(ModelComponent.REGRESSOR if self.mode == DGMode.AUGMENTED else self.component), **cfg['optimizer'])
         self.sch = torch.optim.lr_scheduler.StepLR(self.opt, **cfg['scheduler'])
         # self.sch = torch.optim.lr_scheduler.CosineAnnealingLR(self.opt, **cfg['scheduler'])
+        if self.mode == DGMode.JOINT:
+            self.opt_gen = torch.optim.AdamW(self.model.get_params(ModelComponent.GENERATOR), **cfg['optimizer'])
+            self.opt_cyc = torch.optim.AdamW(self.model.get_params(ModelComponent.GENERATOR_CYCLIC), **cfg['optimizer'])
+            self.opt_reg = torch.optim.AdamW(self.model.get_params(ModelComponent.REGRESSOR), **cfg['optimizer'])
+            self.sch_gen = torch.optim.lr_scheduler.StepLR(self.opt_gen, **cfg['scheduler'])
+            self.sch_cyc = torch.optim.lr_scheduler.StepLR(self.opt_cyc, **cfg['scheduler'])
+            self.sch_reg = torch.optim.lr_scheduler.StepLR(self.opt_reg, **cfg['scheduler'])
 
     def log(self, msg, verbose=True, **kwargs):
         if verbose:
@@ -188,6 +195,45 @@ class DGVCCTrainer():
         
         return loss
     
+    def train_step2(self, batch):
+        imgs, gt_datas = batch
+        imgs = imgs.to(self.device)
+
+        z1 = torch.randn(imgs.size(0), 64, device=self.device)
+        z2 = torch.randn(imgs.size(0), 64, device=self.device)
+
+        if self.mode != DGMode.JOINT:
+            raise NotImplementedError
+        
+        self.opt_gen.zero_grad()
+        self.opt_cyc.zero_grad()
+
+        d_gen, loss_cyc, loss_div, loss_var, loss_dissim, loss_novel = self.model.forward_joint_gen(imgs, z1, z2)
+        loss_den = self.compute_count_loss(d_gen, gt_datas)
+        # loss_gen = loss_den + loss_cyc + 10 * loss_div + 10 * loss_var + 100 * loss_dissim + 100 * loss_novel
+        loss_gen = loss_den + loss_cyc + 10 * loss_div + 100 * loss_novel + loss_var
+
+        print(f'loss_den: {loss_den.item():.4f}, loss_cyc: {loss_cyc.item():.4f}, loss_div: {loss_div.item():.4f}, loss_var: {loss_var.item():.4f}, loss_dissim: {loss_dissim.item():.4f}, loss_novel: {loss_novel.item():.4f}')
+
+        loss_gen.backward()
+        self.opt_gen.step()
+        self.opt_cyc.step()
+
+        self.opt_reg.zero_grad()
+
+        d_cat, loss_sim, loss_rec = self.model.forward_joint_reg(imgs, z1, z2)
+        loss_den_cat = self.compute_count_loss_with_aug(d_cat, gt_datas, 1)
+        # loss_reg = loss_den_cat + 100 * loss_sim + 0.1 * loss_rec
+        loss_reg = loss_den_cat + 0.1 * loss_rec
+
+        print(f'loss_den_cat: {loss_den_cat.item():.4f}, loss_sim: {loss_sim.item():.4f}, loss_rec: {loss_rec.item():.4f}')
+
+        loss_reg.backward()
+        self.opt_reg.step()
+
+        return loss_gen.item(), loss_reg.item()
+
+
     def train_step(self, batch):
         imgs, gt_datas = batch
         imgs = imgs.to(self.device)
@@ -202,63 +248,12 @@ class DGVCCTrainer():
         elif self.mode == DGMode.JOINT:
             z1 = torch.randn(imgs.size(0), 64, device=self.device)
             z2 = torch.randn(imgs.size(0), 64, device=self.device)
-            d_cat, f_cat, loss_cyc, loss_div, loss_sim, loss_dissim = self.model.forward_joint(imgs, z1, z2)
-            loss_den_cat = self.compute_count_loss_with_aug(d_cat, gt_datas, num_aug_samples=1)
-            loss = loss_den_cat + 10 * loss_cyc + 10 * loss_div + 100 * loss_sim + 100 * loss_dissim
-            # loss = loss_den_cat + 10 * loss_cyc + 10 * loss_div + 10 * loss_dissim
+            d_cat, loss_div, loss_dissim, loss_sim, loss_var, loss_cyc, loss_mean = self.model.forward_joint(imgs, z1, z2)
+            loss_den_cat = self.compute_count_loss_with_aug(d_cat, gt_datas, num_aug_samples=2)
+            # loss = loss_den_cat + 100 * loss_div + loss_sim + 100 * loss_dissim
+            loss = loss_den_cat + 10 * loss_div + 0.1 * loss_sim + 100 * loss_dissim + loss_var + 10 * loss_mean
 
-            if self.method == 'Aux':
-                dmaps_aux = gt_datas[-1]
-                dmaps_aux = dmaps_aux.to(self.device)
-                b, c, h, w = dmaps_aux.shape
-                dmaps_aux = dmaps_aux.reshape([b, 1, h//4, 4, w//4, 4]).sum(dim=(3, 5))
-                bg_masks = (dmaps_aux <= 0)
-
-                gts = gt_datas[0]
-                gts = [gt.to(self.device) for gt in gts]
-                gts = [gt // 4 for gt in gts]
-                head_idxs = [(gt[:,1]*w//4 + gt[:,0]).to(torch.long) for gt in gts]
-
-                f = f_cat[:imgs.size(0)]
-                f_gen = f_cat[imgs.size(0):]
-                b, c, h, w = f.shape
-
-                f_head = []
-                f_head_gen = []
-                f_bg = []
-                f_bg_gen = []
-                for i in range(imgs.size(0)):
-                    if head_idxs[i].shape[0] == 0:
-                        continue
-                    if bg_masks[i].sum() == 0:
-                        continue
-                    num_samples = min(min(head_idxs[i].shape[0], bg_masks[i].sum()), 64)
-                    f_i = f[i].reshape(c, h*w)
-                    h_idxs = head_idxs[i][torch.randperm(head_idxs[i].shape[0])[:num_samples]]
-                    f_i_head = f_i[:, h_idxs]
-                    f_head.append(f_i_head)
-
-                    f_gen_i = f_gen[i].reshape(c, h*w)
-                    f_gen_i_head = f_gen_i[:, h_idxs]
-                    f_head_gen.append(f_gen_i_head)
-
-                    bg_idxs = torch.where(bg_masks[i].reshape(-1))[0][:num_samples]
-                    f_i_bg = f_i[:, bg_idxs]
-                    f_bg.append(f_i_bg)
-
-                    f_gen_i_bg = f_gen_i[:, bg_idxs]
-                    f_bg_gen.append(f_gen_i_bg)
-
-                if len(f_head) > 0:
-                    f_head = torch.cat(f_head, dim=1).T
-                    f_head_gen = torch.cat(f_head_gen, dim=1).T
-                    f_bg = torch.cat(f_bg, dim=1).T
-                    f_bg_gen = torch.cat(f_bg_gen, dim=1).T
-
-                    loss_trip = triplet_loss(f_head, f_head_gen, f_bg, margin=1) + triplet_loss(f_head_gen, f_head, f_bg_gen, margin=1)
-                else:
-                    loss_trip = torch.tensor(0.0, device=self.device)
-                loss += 100 * loss_trip
+            print(f'loss_den_cat: {loss_den_cat.item():.4f}, loss_sim: {loss_sim.item():.4f}, loss_div: {loss_div.item():.4f}, loss_dissim: {loss_dissim.item():.4f}, loss_var: {loss_var.item():.4f}, loss_cyc: {loss_cyc.item():.4f}, loss_mean: {loss_mean.item():.4f}')
 
         elif self.mode == DGMode.AUGMENTED:
             z1 = torch.randn(imgs.size(0), 64, device=self.device)
@@ -363,7 +358,7 @@ class DGVCCTrainer():
             plt.close()
         
         elif self.mode == DGMode.JOINT:
-            pred_dmap, pred_dmap_gen, img_gen, img_gen2, img_cyc = self.model.forward_test(img, self.fixed_z1, self.fixed_z2)
+            pred_dmap, pred_dmap_gen, img_gen, img_gen2 = self.model.forward_test(img, self.fixed_z1, self.fixed_z2)
             pred_count = pred_dmap.sum().cpu().item() / self.log_para
             pred_count_gen = pred_dmap_gen.sum().cpu().item() / self.log_para
             gt_count = gt.shape[1]
@@ -372,13 +367,12 @@ class DGVCCTrainer():
             pred_dmap_gen = pred_dmap_gen[0,0].cpu().numpy()
             img_gen = denormalize(img_gen)[0].cpu().permute(1, 2, 0).numpy()
             img_gen2 = denormalize(img_gen2)[0].cpu().permute(1, 2, 0).numpy()
-            img_cyc = denormalize(img_cyc)[0].cpu().permute(1, 2, 0).numpy()
 
-            datas = [img, pred_dmap, pred_dmap_gen, img_gen, img_gen2, img_cyc]
-            titles = [f'Original: {gt_count}', f'Pred: {pred_count:.2f}', f'Pred_gen: {pred_count_gen:.2f}', 'Generated', 'Generated2', 'Cycled']
+            datas = [img, pred_dmap, pred_dmap_gen, img_gen, img_gen2]
+            titles = [f'Original: {gt_count}', f'Pred: {pred_count:.2f}', f'Pred_gen: {pred_count_gen:.2f}', 'Generated', 'Generated2']
 
             fig = plt.figure(figsize=(20, 10))
-            for i in range(6):
+            for i in range(5):
                 ax = fig.add_subplot(2, 3, i+1)
                 ax.set_title(titles[i])
                 ax.imshow(datas[i])
@@ -425,13 +419,13 @@ class DGVCCTrainer():
         img_cat = denormalize(img_cat)
         # img_orig = img_cat[0].cpu().permute(1, 2, 0).numpy()
 
-        for i in range(3):
+        for i in range(1):
             img_gen_i = img_cat[i+1].cpu().permute(1, 2, 0).numpy()
             img_gen_i = Image.fromarray((img_gen_i * 255).astype(np.uint8))
             w, h = img_gen_i.size
             left, top, right, bottom = padding
             img_gen_i = img_gen_i.crop((left.item(), top.item(), w-right.item(), h-bottom.item()))
-            img_gen_i.save(os.path.join(self.gen_dir, '{}_{}.jpg'.format(name[0], i+1)))
+            img_gen_i.save(os.path.join(self.gen_dir, '{}_{}.jpg'.format(name[0], i+2)))
 
     def train_epoch(self, epoch):
         seed_everything(self.seed + epoch)
@@ -439,14 +433,21 @@ class DGVCCTrainer():
         start_time = time.time()
 
         self.model.train()
-        loss_meter = AverageMeter()
+        loss_gen_meter = AverageMeter()
+        loss_reg_meter = AverageMeter()
         for batch in track(self.train_loader, description='Epoch: {}, Training...'.format(epoch), \
                            complete_style='dim cyan', total=len(self.train_loader)):
-            loss = self.train_step(batch)
-            loss_meter.update(loss)
-        print('Epoch: {}, Train Loss: {:.4f}'.format(epoch, loss_meter.avg))
+            loss_gen, loss_reg = self.train_step2(batch)
+            loss_gen_meter.update(loss_gen)
+            loss_reg_meter.update(loss_reg)
+        print('Epoch: {}, Train Loss_gen: {:.4f}, Loss_reg: {:.4f}'.format(epoch, loss_gen_meter.avg, loss_reg_meter.avg))
 
-        self.sch.step()
+        if self.mode == DGMode.JOINT:
+            self.sch_gen.step()
+            self.sch_cyc.step()
+            self.sch_reg.step()
+        else:
+            self.sch.step()
 
         self.model.eval()
         if self.mode == DGMode.GENERATOR:

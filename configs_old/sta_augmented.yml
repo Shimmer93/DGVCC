@@ -1,11 +1,11 @@
 seed: 2112
 method: Density
 mode: AUGMENTED
-num_epochs: &num_epochs 300
+num_epochs: &num_epochs 100
 batch_size: 8
 num_workers: 16
 log_para: 1000
-version: sta_augmented_azhe3
+version: sta_augmented_onlynoval2
 model:
   style_dim: 64
   pretrained: True

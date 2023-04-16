@@ -1,10 +1,10 @@
 seed: 2112
-version: sta_joint_adv_new5
-device: 'cuda:1'
-mode: joint
+version: sta_final_adv_new
+device: 'cuda:3'
+mode: final
 log_para: 1000
 num_epochs: &num_epochs 300
-checkpoint: '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_joint_adv_new5/best_239_83.8695.pth'
+checkpoint: '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_final_adv_new/best_269_85.2876.pth'
 model:
   name: 'dgnet'
   params:
@@ -29,7 +29,7 @@ test_dataset:
     unit_size: 16
     pre_resize: 1
 train_loader:
-  batch_size: 4
+  batch_size: 8
   num_workers: 16
   shuffle: True
   pin_memory: True

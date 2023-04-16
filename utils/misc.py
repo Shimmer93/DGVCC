@@ -1,6 +1,7 @@
 from PIL import Image
 import numpy as np
 import torch
+from rich.progress import track
 
 import random
 import os
@@ -93,6 +94,27 @@ class AverageMeter(object):
         self.count += n
         self.avg = self.sum / self.count
 
+class DictAvgMeter(object):
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.val = {}
+        self.avg = {}
+        self.sum = {}
+        self.count = {}
+
+    def update(self, val, n=1):
+        for k, v in val.items():
+            if k not in self.val:
+                self.val[k] = 0
+                self.sum[k] = 0
+                self.count[k] = 0
+            self.val[k] = v
+            self.sum[k] += v * n
+            self.count[k] += n
+            self.avg[k] = self.sum[k] / self.count[k]
+
 def seed_everything(seed):
     random.seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
@@ -103,3 +125,6 @@ def seed_everything(seed):
 
 def get_current_datetime():
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
+def easy_track(iterable, description=None):
+    return track(iterable, description=description, complete_style='dim cyan', total=len(iterable))

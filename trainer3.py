@@ -14,7 +14,7 @@ from math import sqrt
 from enum import Enum
 from PIL import Image
 
-from models.dgvcc import DGVCCModel, ModelComponent
+from models.dgvcc3 import DGVCCModel, ModelComponent
 from losses.bl import BL
 from losses.triplet import triplet_loss
 from datasets.den_dataset import DensityMapDataset
@@ -202,63 +202,13 @@ class DGVCCTrainer():
         elif self.mode == DGMode.JOINT:
             z1 = torch.randn(imgs.size(0), 64, device=self.device)
             z2 = torch.randn(imgs.size(0), 64, device=self.device)
-            d_cat, f_cat, loss_cyc, loss_div, loss_sim, loss_dissim = self.model.forward_joint(imgs, z1, z2)
-            loss_den_cat = self.compute_count_loss_with_aug(d_cat, gt_datas, num_aug_samples=1)
-            loss = loss_den_cat + 10 * loss_cyc + 10 * loss_div + 100 * loss_sim + 100 * loss_dissim
-            # loss = loss_den_cat + 10 * loss_cyc + 10 * loss_div + 10 * loss_dissim
+            d_cat, loss_div, loss_dissim, loss_sim, loss_var, loss_cyc, loss_mean = self.model.forward_joint(imgs, z1, z2)
+            loss_den_cat = self.compute_count_loss_with_aug(d_cat, gt_datas, num_aug_samples=2)
+            # loss = loss_den_cat + 100 * loss_div + loss_sim + 100 * loss_dissim
+            # loss = loss_den_cat + 10 * loss_div + 0.1 * loss_sim + 100 * loss_dissim + loss_var + 10 * loss_cyc + 10 * loss_mean
+            loss = loss_den_cat + 100 * loss_div + 0.1 * loss_sim + 100 * loss_dissim + 10 * loss_var + 10 * loss_mean
 
-            if self.method == 'Aux':
-                dmaps_aux = gt_datas[-1]
-                dmaps_aux = dmaps_aux.to(self.device)
-                b, c, h, w = dmaps_aux.shape
-                dmaps_aux = dmaps_aux.reshape([b, 1, h//4, 4, w//4, 4]).sum(dim=(3, 5))
-                bg_masks = (dmaps_aux <= 0)
-
-                gts = gt_datas[0]
-                gts = [gt.to(self.device) for gt in gts]
-                gts = [gt // 4 for gt in gts]
-                head_idxs = [(gt[:,1]*w//4 + gt[:,0]).to(torch.long) for gt in gts]
-
-                f = f_cat[:imgs.size(0)]
-                f_gen = f_cat[imgs.size(0):]
-                b, c, h, w = f.shape
-
-                f_head = []
-                f_head_gen = []
-                f_bg = []
-                f_bg_gen = []
-                for i in range(imgs.size(0)):
-                    if head_idxs[i].shape[0] == 0:
-                        continue
-                    if bg_masks[i].sum() == 0:
-                        continue
-                    num_samples = min(min(head_idxs[i].shape[0], bg_masks[i].sum()), 64)
-                    f_i = f[i].reshape(c, h*w)
-                    h_idxs = head_idxs[i][torch.randperm(head_idxs[i].shape[0])[:num_samples]]
-                    f_i_head = f_i[:, h_idxs]
-                    f_head.append(f_i_head)
-
-                    f_gen_i = f_gen[i].reshape(c, h*w)
-                    f_gen_i_head = f_gen_i[:, h_idxs]
-                    f_head_gen.append(f_gen_i_head)
-
-                    bg_idxs = torch.where(bg_masks[i].reshape(-1))[0][:num_samples]
-                    f_i_bg = f_i[:, bg_idxs]
-                    f_bg.append(f_i_bg)
-
-                    f_gen_i_bg = f_gen_i[:, bg_idxs]
-                    f_bg_gen.append(f_gen_i_bg)
-
-                if len(f_head) > 0:
-                    f_head = torch.cat(f_head, dim=1).T
-                    f_head_gen = torch.cat(f_head_gen, dim=1).T
-                    f_bg = torch.cat(f_bg, dim=1).T
-                    f_bg_gen = torch.cat(f_bg_gen, dim=1).T
-
-                    loss_trip = triplet_loss(f_head, f_head_gen, f_bg, margin=1) + triplet_loss(f_head_gen, f_head, f_bg_gen, margin=1)
-                else:
-                    loss_trip = torch.tensor(0.0, device=self.device)
-                loss += 100 * loss_trip
+            print(f'loss_den_cat: {loss_den_cat.item():.4f}, loss_sim: {loss_sim.item():.4f}, loss_div: {loss_div.item():.4f}, loss_dissim: {loss_dissim.item():.4f}, loss_var: {loss_var.item():.4f}, loss_cyc: {loss_cyc.item():.4f}, loss_mean: {loss_mean.item():.4f}')
 
         elif self.mode == DGMode.AUGMENTED:
             z1 = torch.randn(imgs.size(0), 64, device=self.device)
@@ -363,7 +313,7 @@ class DGVCCTrainer():
             plt.close()
         
         elif self.mode == DGMode.JOINT:
-            pred_dmap, pred_dmap_gen, img_gen, img_gen2, img_cyc = self.model.forward_test(img, self.fixed_z1, self.fixed_z2)
+            pred_dmap, pred_dmap_gen, img_gen, img_gen2 = self.model.forward_test(img, self.fixed_z1, self.fixed_z2)
             pred_count = pred_dmap.sum().cpu().item() / self.log_para
             pred_count_gen = pred_dmap_gen.sum().cpu().item() / self.log_para
             gt_count = gt.shape[1]
@@ -372,13 +322,12 @@ class DGVCCTrainer():
             pred_dmap_gen = pred_dmap_gen[0,0].cpu().numpy()
             img_gen = denormalize(img_gen)[0].cpu().permute(1, 2, 0).numpy()
             img_gen2 = denormalize(img_gen2)[0].cpu().permute(1, 2, 0).numpy()
-            img_cyc = denormalize(img_cyc)[0].cpu().permute(1, 2, 0).numpy()
 
-            datas = [img, pred_dmap, pred_dmap_gen, img_gen, img_gen2, img_cyc]
-            titles = [f'Original: {gt_count}', f'Pred: {pred_count:.2f}', f'Pred_gen: {pred_count_gen:.2f}', 'Generated', 'Generated2', 'Cycled']
+            datas = [img, pred_dmap, pred_dmap_gen, img_gen, img_gen2]
+            titles = [f'Original: {gt_count}', f'Pred: {pred_count:.2f}', f'Pred_gen: {pred_count_gen:.2f}', 'Generated', 'Generated2']
 
             fig = plt.figure(figsize=(20, 10))
-            for i in range(6):
+            for i in range(5):
                 ax = fig.add_subplot(2, 3, i+1)
                 ax.set_title(titles[i])
                 ax.imshow(datas[i])

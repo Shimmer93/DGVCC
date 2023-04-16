@@ -38,7 +38,8 @@ class DensityMapDataset(BaseDataset):
         if img_fn.startswith(self.root):
             gt_fn = img_fn.replace(img_ext, '.npy')
         else:
-            gt_fn = os.path.join(self.root, 'train', basename[:-2] + '.npy')
+            basename = basename[:-2]
+            gt_fn = os.path.join(self.root, 'train', basename + '.npy')
         gt = self._load_gt(gt_fn)
 
         if self.method == 'train':
@@ -63,7 +64,7 @@ class DensityMapDataset(BaseDataset):
 
         # Resizing
         # factor = random.random() * 0.5 + 0.75
-        factor = self.pre_resize * random.random() + 0.5
+        factor = self.pre_resize # * random.random() * 0.8 + 0.6
         if factor != 1.0:
             new_w = (int)(w * factor)
             new_h = (int)(h * factor)

@@ -9,6 +9,9 @@ from PIL import Image
 import random
 import os
 
+import sys
+sys.path.append('..')
+
 from utils.misc import random_crop, get_padding
 
 class BaseDataset(Dataset):
@@ -52,7 +55,7 @@ class BaseDataset(Dataset):
             raise ValueError('method must be train, val or test')
         self.img_fns = glob(os.path.join(root, self.method, '*.jpg')) + \
                           glob(os.path.join(root, self.method, '*.png'))
-        if self.gen_root is not None:
+        if self.gen_root is not None and self.method == 'train':
             self.img_fns += glob(os.path.join(self.gen_root, '*.jpg')) + \
                               glob(os.path.join(self.gen_root, '*.png'))
             
@@ -165,6 +168,8 @@ class BaseDataset(Dataset):
             img = F.pad(img, padding)
             if len(gt) > 0:
                 gt = gt + [left, top]
+        else:
+            padding = (0, 0, 0, 0)
 
         # Downsampling
         gt = gt / self.downsample
@@ -173,4 +178,14 @@ class BaseDataset(Dataset):
         img = self.transform(img)
         gt = torch.from_numpy(gt.copy()).float()
 
-        return img, gt, name
+        return img, gt, name, padding
+    
+if __name__ == '__main__':
+    from torch.utils.data import DataLoader
+
+    dataset = BaseDataset(root='/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/sta', 
+                          crop_size=512, downsample=1, method='train', unit_size=16,
+                          gen_root='/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_joint_nocheat2/gen')
+    # dataloader = DataLoader(dataset, batch_size=2, shuffle=False, num_workers=0)
+    # for i, (img, gt, name, padding) in enumerate(dataloader):
+    #     print(name, padding)

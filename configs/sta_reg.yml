@@ -1,10 +1,10 @@
 seed: 2112
-version: sta_joint_adv_new5
-device: 'cuda:1'
-mode: joint
+version: sta_reg
+device: 'cuda:3'
+mode: regression
 log_para: 1000
 num_epochs: &num_epochs 300
-checkpoint: '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_joint_adv_new5/best_239_83.8695.pth'
+checkpoint: '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_reg/best_115_69.74648697916668.pth'
 model:
   name: 'dgnet'
   params:
@@ -22,14 +22,14 @@ val_dataset: *train_dataset_params
 test_dataset:
   name: 'den'
   params: 
-    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/qnrf'
+    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/stb'
     crop_size: 320
     downsample: 1
     is_grey: False
     unit_size: 16
     pre_resize: 1
 train_loader:
-  batch_size: 4
+  batch_size: 32
   num_workers: 16
   shuffle: True
   pin_memory: True
@@ -47,7 +47,7 @@ optimizer:
   name: 'adamw'
   params:
     lr: 0.0001
-    weight_decay: 0.00001
+    weight_decay: 0.0001
 scheduler:
   name: 'step'
   params:
