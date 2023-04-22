@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from torchvision import models
 from enum import Enum
 from losses.triplet import triplet_loss
+from queue import Queue
 
 class ConvBlock(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=False, bn=False, insn = False, relu=True):
@@ -34,22 +35,28 @@ class AdaIN2d(nn.Module):
         gamma, beta = torch.chunk(h, chunks=2, dim=1)
         return (1 + gamma) * self.norm(x) + beta
 
+def stylize_by_novel_style(x, lamda=1):
+    mu = torch.mean(x, dim=(2, 3))
+    sigma = torch.std(x, dim=(2, 3))
+    novel_mu = torch.randn_like(mu) * sigma * lamda + mu
+    novel_sigma = torch.randn_like(sigma) * sigma * lamda + sigma
+    return (x - mu) / sigma * novel_sigma + novel_mu
+
 class Generator(nn.Module):
     def __init__(self):
         super().__init__()
         vgg = models.vgg19(weights=models.VGG19_Weights.DEFAULT)
         vgg_feats = list(vgg.features.children())
-        # self.enc = nn.Sequential(*vgg_feats[:41])
-        self.enc = nn.Sequential(*vgg_feats[:18])
+        self.enc = nn.Sequential(*vgg_feats[:26])
         self.enc.requires_grad_(False)
 
-        self.adain = AdaIN2d(64, 256)
+        # self.adain = AdaIN2d(64, 512)
 
         self.dec = nn.Sequential(
-            # ConvBlock(512, 512),
-            # ConvBlock(512, 256),
-            # nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
-            # ConvBlock(256, 256),
+            ConvBlock(512, 512),
+            ConvBlock(512, 256),
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+            ConvBlock(256, 256),
             ConvBlock(256, 256),
             ConvBlock(256, 256),
             ConvBlock(256, 128),
@@ -78,19 +85,18 @@ class Generator(nn.Module):
         return x
     
     def _get_sty(self, x):
-        # mu = torch.mean(x, dim=(2,3))
-        # std = torch.std(x, dim=(2,3))
-        # return torch.cat([mu, std], dim=1)
-        return torch.mean(x, dim=(2,3))
+        mu = torch.mean(x, dim=(2,3))
+        std = torch.std(x, dim=(2,3))
+        return torch.cat([mu, std], dim=1)
 
     def encode(self, x):
         f1 = self.enc[:4](x)
         f2 = self.enc[4:9](f1)
         f3 = self.enc[9:18](f2)
-        # f4 = self.enc[18:](f3)
+        f4 = self.enc[18:](f3)
 
-        cot = f3
-        sty = [self._get_sty(f1), self._get_sty(f2)]
+        cot = f4
+        sty = torch.cat([self._get_sty(f1), self._get_sty(f2), self._get_sty(f3)], dim=1)
 
         return cot, sty
     
@@ -192,9 +198,8 @@ class MapAggregator(nn.Module):
 
         return (x*attn).sum(dim=1, keepdim=True)
 
-
-class DGNet2(nn.Module):
-    def __init__(self, pretrained=True, num_samples=3):
+class DGNet3(nn.Module):
+    def __init__(self, pretrained=True, num_samples=3, max_num_styles=512):
         super().__init__()
         self.gen = Generator()
         self.gen_cyc = Generator()
@@ -204,9 +209,26 @@ class DGNet2(nn.Module):
             ConvBlock(1+num_samples, 1+num_samples),
             ConvBlock(1+num_samples, 1, kernel_size=1, padding=0)
         )
-        # self.final = MapAggregator(num_samples+1)
+
+        self.register_buffer('style_queue', torch.zeros(max_num_styles, 896))
+        self.max_num_styles = max_num_styles
+        self.num_styles = 0
 
         self.num_samples = num_samples
+
+    def _add_to_queue(self, batch):
+        b = batch.size(0)
+        if self.num_styles + b <= self.max_num_styles:
+            self.style_queue[self.num_styles:self.num_styles+b] = batch.detach()
+            self.num_styles += b
+        else:
+            r = self.num_styles + b - self.max_num_styles
+            self.style_queue[:self.max_num_styles-b] = self.style_queue[r:r+self.max_num_styles-b].clone()
+            self.style_queue[self.max_num_styles-b:] = batch.detach()
+            self.num_styles = self.max_num_styles
+
+    def _get_queue(self):
+        return self.style_queue[:self.num_styles]
 
     def _dissim_loss(self, x, y, thrs, amap=None):
         res = ((x-y)**2) * amap if amap is not None else (x-y)**2
@@ -218,7 +240,14 @@ class DGNet2(nn.Module):
             return -(res).clamp(max=thrs).mean()
         else:
             raise ValueError('Invalid input size')
-
+        
+    def _rbf_loss(self, x, y, gamma):
+        # loss based on RBF kernel
+        # x: N x C
+        # y: M x C
+        # gamma: float
+        # return: N
+        return torch.exp(-gamma * (x.unsqueeze(1)-y.unsqueeze(0)).pow(2).sum(2)).mean(1)
 
     def forward_gen(self, x, z=None):
         self.gen.requires_grad_(True)
@@ -228,47 +257,51 @@ class DGNet2(nn.Module):
         self.reg.requires_grad_(True)
         return self.reg(x)[0]
     
-    def forward_joint_gen(self, x, z1, z2, emap):
+    def forward_joint_gen(self, x, z, emap):
         self.gen.requires_grad_(True)
         self.gen.enc.requires_grad_(False)
         self.reg.requires_grad_(False)
 
         amap = 1 + emap.detach() / emap.detach().max()
 
-        # x_gen1, _ = self.gen(x, z1)
-        # x_gen2, _ = self.gen(x, z2)
-        # x_rec, _ = self.gen(x)
-        # f_cot, _ = self.gen.get_cot_sty(x)
-        # f_cot_gen1, _ = self.gen.get_cot_sty(x_gen1)
         f, s = self.gen.encode(x)
-        f_trans1 = self.gen.transfer(f, z1)
-        f_trans2 = self.gen.transfer(f, z2)
+        f_trans = self.gen.transfer(f, z)
+
         x_rec = self.gen.decode(f)
-        x_gen1 = self.gen.decode(f_trans1)
-        x_gen2 = self.gen.decode(f_trans2)
-        # f_cat = torch.cat([f, f_trans1, f_trans2], dim=0)
-        # x_cat = self.gen.decode(f_cat)
+        x_gen = self.gen.decode(f_trans)
 
-        # x_rec, x_gen1, x_gen2 = torch.chunk(x_cat, chunks=3, dim=0)
-        f_gen1, s_gen1 = self.gen.encode(x_gen1)
-        f_gen2, s_gen2 = self.gen.encode(x_gen2)
+        f_gen, s_gen = self.gen.encode(x_gen)
 
-        x_cat = torch.cat([x, x_gen1, x_gen2], dim=0)
-        _, _, f_var_cat = self.reg(x_cat)
+        x_cat = torch.cat([x, x_gen], dim=0)
+        y_cat, _, _ = self.reg(x_cat)
 
-        f_var, f_var_gen1, f_var_gen2 = torch.chunk(f_var_cat, chunks=3, dim=0)
+        y, y_gen = torch.chunk(y_cat, chunks=2, dim=0)
 
-        l_div = -(x_gen1-x_gen2).abs().mean([1,2,3]).clamp(max=0.5).mean()
+        if self.num_styles == 0:
+            self._add_to_queue(s[0:1])
+        else:
+            cur_styles = self._get_queue()
+            l_stys = self._rbf_loss(s, cur_styles, 0.1)
+            s_best = s[l_stys.argmin()]
+            # if s_best.size(0) > 0:
+            self._add_to_queue(s_best.unsqueeze(0))
+                # print(f'Added {s_best.size(0)} styles to queue')
+
+        cur_styles = self._get_queue()
+        l_gen_stys = self._rbf_loss(s_gen, cur_styles, 0.1)
+        s_gen_best = s_gen[l_gen_stys.argmin()]
+        # if s_gen_best.size(0) > 0:
+        self._add_to_queue(s_gen_best.unsqueeze(0))
+            # print(f'Added {s_gen_best.size(0)} styles to queue')
+        
+        l_sty = l_gen_stys.mean()
         l_rec = F.mse_loss(x_rec, x)
-        l_cot = ((F.mse_loss(f, f_gen1, reduction='none') + F.mse_loss(f, f_gen2, reduction='none'))*amap).mean()
-        l_var = self._dissim_loss(f_var, f_var_gen1, 1, amap) + self._dissim_loss(f_var, f_var_gen2, 1, amap) + self._dissim_loss(f_var_gen1, f_var_gen2, 1, amap)
-        l_sty = self._dissim_loss(s_gen2[0], s_gen1[0], 0.2) + self._dissim_loss(s_gen2[1], s_gen1[1], 0.2) + \
-                self._dissim_loss(s[0], s_gen1[0], 0.2) + self._dissim_loss(s[1], s_gen1[1], 0.2) + \
-                self._dissim_loss(s[0], s_gen2[0], 0.2) + self._dissim_loss(s[1], s_gen2[1], 0.2)
+        l_ctt = F.mse_loss(f, f_gen)
+        l_den = F.mse_loss(y, y_gen)
 
-        print(f'l_div: {l_div:.3f}, l_rec: {l_rec:.3f}, l_cot: {l_cot:.3f}, l_var: {l_var:.3f}, l_sty: {l_sty:.3f}')
+        print(f'l_sty: {l_sty:.3f}, l_rec: {l_rec:.3f}, l_ctt: {l_ctt:.3f}, l_den: {l_den:.3f}')
 
-        return 10 * l_div + 100 * l_rec + l_cot + 10 * l_var + 10 * l_sty
+        return 1000 * l_sty + 10 * l_rec + 10 * l_ctt + 10 * l_den
     
     def forward_joint_reg(self, x, z):
         self.reg.requires_grad_(True)
@@ -277,17 +310,19 @@ class DGNet2(nn.Module):
         x_gen, _ = self.gen(x, z)
 
         x_cat = torch.cat([x, x_gen], dim=0)
-        y_cat, f_inv_cat, f_var_cat = self.reg(x_cat)
+        y_cat, _, _ = self.reg(x_cat)
 
+        y, y_gen = torch.chunk(y_cat, chunks=2, dim=0)
         # f_inv, f_inv_gen = torch.chunk(f_inv_cat, chunks=2, dim=0)
-        f_var, f_var_gen = torch.chunk(f_var_cat, chunks=2, dim=0)
+        # f_var, f_var_gen = torch.chunk(f_var_cat, chunks=2, dim=0)
 
         # l_sim = F.mse_loss(f_inv, f_inv_gen)
-        l_var = self._dissim_loss(f_var, f_var_gen, 1)
+        # l_var = self._dissim_loss(f_var, f_var_gen, 1)
 
-        print(f'l_var: {l_var:.3f}')
+        # print(f'l_var: {l_var:.3f}')
+        l_den = F.mse_loss(y, y_gen)
 
-        return y_cat, 10 * l_var
+        return y_cat, l_den
     
     def forward_joint(self, x, z1, z2):
         self.reg.requires_grad_(True)

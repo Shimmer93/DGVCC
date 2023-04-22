@@ -34,12 +34,14 @@ class Trainer(object):
             f.write(msg + '\n')
 
     def load_ckpt(self, model, path):
-        model.load_state_dict(torch.load(path, map_location=self.device), strict=False)
+        if path is not None:
+            self.log('Loading checkpoint from {}'.format(path))
+            model.load_state_dict(torch.load(path, map_location=self.device), strict=False)
 
     def save_ckpt(self, model, path):
         torch.save(model.state_dict(), path)
 
-    def train_step(self, model, loss, optimizer, batch):
+    def train_step(self, model, loss, optimizer, batch, epoch):
         pass
 
     def val_step(self, model, batch):
@@ -71,7 +73,7 @@ class Trainer(object):
             # Training
             model.train()
             for batch in easy_track(train_dataloader, description=f'Epoch {epoch}: Training...'):
-                train_loss = self.train_step(model, loss, optimizer, batch)
+                train_loss = self.train_step(model, loss, optimizer, batch, epoch)
             if scheduler is not None:
                 if isinstance(scheduler, list):
                     for s in scheduler:

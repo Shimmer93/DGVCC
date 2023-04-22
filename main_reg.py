@@ -15,11 +15,8 @@ from enum import Enum
 from PIL import Image
 from glob import glob
 
-from trainers.dgtrainer import DGTrainer
-from trainers.dgtrainer2 import DGTrainer2
-from models.dgvcc_new import DGNet
-from models.dgvcc_new2 import DGNet2
-from models.dgvcc_new3 import DGNet3
+from trainers.regtrainer import DGRegTrainer
+from models.dgreg import DensityRegressor
 from losses.bl import BL
 from datasets.den_dataset import DensityMapDataset
 from datasets.bay_dataset import BayesianDataset
@@ -27,7 +24,7 @@ from datasets.dual_dataset import DualDataset
 from utils.misc import divide_img_into_patches, denormalize, AverageMeter, DictAvgMeter, seed_everything, get_current_datetime
 
 def get_model(name, params):
-    model = DGNet3(**params)
+    model = DensityRegressor(**params)
     return model
 
 def get_loss(name, params):
@@ -42,13 +39,16 @@ def get_loss(name, params):
 def get_dataset(name, params, method):
     if name == 'den':
         dataset = DensityMapDataset(method=method, **params)
+        collate = DensityMapDataset.collate
     elif name == 'bay':
         dataset = BayesianDataset(method=method, **params)
+        collate = BayesianDataset.collate
     elif name == 'dual':
         dataset = DualDataset(method=method, **params)
+        collate = DualDataset.collate
     else:
         raise ValueError('Unknown dataset: {}'.format(name))
-    return dataset
+    return dataset, collate
 
 def get_optimizer(name, params, model):
     if name == 'sgd':
@@ -86,7 +86,6 @@ def load_config(config_path, task):
     init_params['seed'] = cfg['seed']
     init_params['version'] = cfg['version']
     init_params['device'] = cfg['device']
-    init_params['mode'] = cfg['mode']
     init_params['log_para'] = cfg['log_para']
 
     task_params['model'] = get_model(cfg['model']['name'], cfg['model']['params'])
@@ -94,28 +93,16 @@ def load_config(config_path, task):
     
     if task == 'train':
         task_params['loss'] = get_loss(cfg['loss']['name'], cfg['loss']['params'])
-        train_dataset = get_dataset(cfg['train_dataset']['name'], cfg['train_dataset']['params'], method='train')
-        task_params['train_dataloader'] = DataLoader(train_dataset, collate_fn=train_dataset.__class__.collate, **cfg['train_loader'])
-        val_dataset = get_dataset(cfg['val_dataset']['name'], cfg['val_dataset']['params'], method='val')
+        train_dataset, collate = get_dataset(cfg['train_dataset']['name'], cfg['train_dataset']['params'], method='train')
+        task_params['train_dataloader'] = DataLoader(train_dataset, collate_fn=collate, **cfg['train_loader'])
+        val_dataset, _ = get_dataset(cfg['val_dataset']['name'], cfg['val_dataset']['params'], method='val')
         task_params['val_dataloader'] = DataLoader(val_dataset, **cfg['val_loader'])
-
-        if cfg['mode'] == 'joint':
-            opt_reg = get_optimizer(cfg['optimizer']['name'], cfg['optimizer']['params'], task_params['model'].reg)
-            opt_gen = get_optimizer(cfg['optimizer']['name'], cfg['optimizer']['params'], task_params['model'].gen)
-            opt_cyc = get_optimizer(cfg['optimizer']['name'], cfg['optimizer']['params'], task_params['model'].gen_cyc)
-            task_params['optimizer'] = [opt_reg, opt_gen, opt_cyc]
-            sch_reg = get_scheduler(cfg['scheduler']['name'], cfg['scheduler']['params'], opt_reg)
-            sch_gen = get_scheduler(cfg['scheduler']['name'], cfg['scheduler']['params'], opt_gen)
-            sch_cyc = get_scheduler(cfg['scheduler']['name'], cfg['scheduler']['params'], opt_cyc)
-            task_params['scheduler'] = [sch_reg, sch_gen, sch_cyc]
-        else:
-            task_params['optimizer'] = get_optimizer(cfg['optimizer']['name'], cfg['optimizer']['params'], task_params['model'])
-            task_params['scheduler'] = get_scheduler(cfg['scheduler']['name'], cfg['scheduler']['params'], task_params['optimizer'])
-        
+        task_params['optimizer'] = get_optimizer(cfg['optimizer']['name'], cfg['optimizer']['params'], task_params['model'])
+        task_params['scheduler'] = get_scheduler(cfg['scheduler']['name'], cfg['scheduler']['params'], task_params['optimizer'])
         task_params['num_epochs'] = cfg['num_epochs']
 
     else:
-        test_dataset = get_dataset(cfg['test_dataset']['name'], cfg['test_dataset']['params'], method='test')
+        test_dataset, _ = get_dataset(cfg['test_dataset']['name'], cfg['test_dataset']['params'], method='test')
         task_params['test_dataloader'] = DataLoader(test_dataset, **cfg['test_loader'])
 
     return init_params, task_params
@@ -128,7 +115,7 @@ if __name__ == '__main__':
 
     init_params, task_params = load_config(args.config, args.task)
 
-    trainer = DGTrainer2(**init_params)
+    trainer = DGRegTrainer(**init_params)
     os.system(f'cp {args.config} {trainer.log_dir}')
 
     if args.task == 'train':

@@ -34,7 +34,7 @@ class DGTrainer2(Trainer):
             super().load_ckpt(model.reg, path)
         elif self.mode == 'generation':
             super().load_ckpt(model.gen, path)
-        elif self.mode == 'joint' or self.mode == 'final':
+        elif self.mode == 'joint' or self.mode == 'final' or self.mode == 'afterjoint':
             super().load_ckpt(model, path)
         else:
             raise ValueError('Unknown mode: {}'.format(self.mode))
@@ -44,7 +44,7 @@ class DGTrainer2(Trainer):
             super().save_ckpt(model.reg, path)
         elif self.mode == 'generation':
             super().save_ckpt(model.gen, path)
-        elif self.mode == 'joint' or self.mode == 'final':
+        elif self.mode == 'joint' or self.mode == 'final' or self.mode == 'afterjoint':
             super().save_ckpt(model, path)
         else:
             raise ValueError('Unknown mode: {}'.format(self.mode))
@@ -77,6 +77,10 @@ class DGTrainer2(Trainer):
             gt_dmaps = gt_dmaps.to(self.device)
             gt_dmaps = gt_dmaps.repeat(num_dmaps, 1, 1, 1)
             loss_value = loss(pred_dmaps, gt_dmaps * self.log_para)
+            emap = pred_dmaps - gt_dmaps * self.log_para
+            add_item = torch.chunk(emap, num_dmaps, dim=0)[0].abs()
+            b, c, h, w = add_item.shape
+            add_item = add_item.reshape(b, c, 4, h // 4, 4, w // 4).mean(dim=(2, 4))
 
         elif loss.__class__.__name__ == 'BL':
             gts, targs, st_sizes = gt_datas
@@ -86,11 +90,12 @@ class DGTrainer2(Trainer):
             targs = targs * num_dmaps
             st_sizes = st_sizes.repeat(num_dmaps)
             loss_value = loss(gts, st_sizes, targs, pred_dmaps)
+            add_item = None
 
         else:
             raise ValueError('Unknown loss: {}'.format(loss))
         
-        return loss_value
+        return loss_value, add_item
 
     def train_step(self, model, loss, optimizer, batch):
         imgs, gt_datas = batch
@@ -114,25 +119,33 @@ class DGTrainer2(Trainer):
             imgs = imgs.to(self.device)
             z1 = torch.randn(imgs.shape[0], 64).to(self.device)
             z2 = torch.randn(imgs.shape[0], 64).to(self.device)
-            z3 = torch.randn(imgs.shape[0], 64).to(self.device)
+            # z3 = torch.randn(imgs.shape[0], 64).to(self.device)
 
             opt_reg, opt_gen, opt_cyc = optimizer
 
             opt_reg.zero_grad()
-            den_cat, loss_add_reg = model.forward_joint_reg(imgs, z3)
-            loss_count_reg = self.compute_count_loss_with_aug(loss, den_cat, gt_datas, 1)
+            den_cat, loss_add_reg = model.forward_joint_reg(imgs, z1)
+            loss_count_reg, emap = self.compute_count_loss_with_aug(loss, den_cat, gt_datas, 1)
             loss_reg = loss_count_reg + loss_add_reg
             loss_reg.backward()
             opt_reg.step()
 
             opt_gen.zero_grad()
             opt_cyc.zero_grad()
-            loss_gen = model.forward_joint_gen(imgs, z1, z2)
+            loss_gen = model.forward_joint_gen(imgs, z2, emap)
             loss_gen.backward()
             opt_gen.step()
             opt_cyc.step()
 
             loss_value = loss_reg + loss_gen
+        elif self.mode == 'afterjoint':
+            optimizer.zero_grad()
+            imgs = imgs.to(self.device)
+            zs = torch.randn(imgs.shape[0], 64*3).to(self.device)
+            den = model.forward_afterjoint(imgs, zs)
+            loss_value = self.compute_count_loss_with_aug(loss, den, gt_datas, 3)
+            loss_value.backward()
+            optimizer.step()
         elif self.mode == 'final':
             optimizer.zero_grad()
             imgs = imgs.to(self.device)
@@ -149,7 +162,7 @@ class DGTrainer2(Trainer):
     def val_step(self, model, batch):
         img, gt, _, _ = batch
 
-        if self.mode == 'regression' or self.mode == 'joint':
+        if self.mode == 'regression' or self.mode == 'joint' or self.mode == 'afterjoint':
             img = img.to(self.device)
             pred_dmap = model.forward_reg(img)
             pred_count = pred_dmap.sum().cpu().item() / self.log_para
@@ -185,10 +198,10 @@ class DGTrainer2(Trainer):
     def test_step(self, model, batch):
         img, gt, _, _ = batch
 
-        if self.mode == 'regression' or self.mode == 'joint':
+        if self.mode == 'regression' or self.mode == 'joint' or self.mode == 'afterjoint':
             img = img.to(self.device)
             h, w = img.shape[2:]
-            patch_size = 1440
+            patch_size = 720
             if h >= patch_size or w >= patch_size:
                 pred_count = 0
                 img_patches, _, _ = divide_img_into_patches(img, patch_size)
@@ -234,7 +247,7 @@ class DGTrainer2(Trainer):
 
         vis_dir = os.path.join(self.log_dir, 'vis')
 
-        if self.mode == 'regression':
+        if self.mode == 'regression' or self.mode == 'afterjoint':
             img = img.to(self.device)
             pred_dmap = model.forward_reg(img)
             pred_count = pred_dmap.sum().cpu().item() / self.log_para

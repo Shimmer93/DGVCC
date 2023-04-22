@@ -27,8 +27,6 @@ class DGTrainer(Trainer):
         self.log_para = log_para
 
     def load_ckpt(self, model, path):
-        if path is None:
-            return
         if self.mode == 'regression':
             super().load_ckpt(model.reg, path)
         elif self.mode == 'generation':

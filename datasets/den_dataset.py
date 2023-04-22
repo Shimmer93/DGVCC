@@ -128,8 +128,14 @@ class DensityMapDataset(BaseDataset):
         return img, gt, dmap
 
 if __name__ == '__main__':
-    dataset = DensityMapDataset('/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/fdst', 512, 4, 'train', False, 1, 0.5, gt_dir='/mnt/data/smartcity/FDST/train/ground_truth')
+    dataset = DensityMapDataset('/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/sta', 16, 1, 'train', False, 1)
 
-    for i in range(10):
+    count = 0
+    has_crowd = 0
+    for i in range(len(dataset.img_fns)):
         img, gt, dmap = dataset[i]
-        print(img.shape, gt.shape, dmap.shape)
+        if len(gt) > 0:
+            has_crowd += 1
+        count += 1
+
+    print(count, has_crowd)
