@@ -95,10 +95,10 @@ class Generator(nn.Module):
 class DensityRegressor(nn.Module):
     def __init__(self, pretrained=True):
         super().__init__()
-        vgg = models.vgg16_bn(weights=models.VGG16_BN_Weights.DEFAULT if pretrained else None)
-        self.stage1 = nn.Sequential(*list(vgg.features.children())[:23])
-        self.stage2 = nn.Sequential(*list(vgg.features.children())[23:33])
-        self.stage3 = nn.Sequential(*list(vgg.features.children())[33:43])
+        swin = models.swin_b(weights=models.Swin_B_Weights.DEFAULT if pretrained else None)
+        self.stage1 = nn.Sequential(*list(swin.features.children())[:2])
+        self.stage2 = nn.Sequential(*list(swin.features.children())[2:4])
+        self.stage3 = nn.Sequential(*list(swin.features.children())[4:6])
 
         self.dec3 = nn.Sequential(
             ConvBlock(512, 1024, bn=True),
@@ -106,12 +106,12 @@ class DensityRegressor(nn.Module):
         )
 
         self.dec2 = nn.Sequential(
-            ConvBlock(1024, 512, bn=True),
+            ConvBlock(768, 512, bn=True),
             ConvBlock(512, 256, bn=True)
         )
 
         self.dec1 = nn.Sequential(
-            ConvBlock(512, 256, bn=True),
+            ConvBlock(384, 256, bn=True),
             ConvBlock(256, 128, bn=True)
         )
 
@@ -127,19 +127,21 @@ class DensityRegressor(nn.Module):
             ConvBlock(512, 512),
             ConvBlock(512, 512),
             ConvBlock(512, 256),
-            nn.MaxPool2d(kernel_size=2, stride=2),
             ConvBlock(256, 256),
             ConvBlock(256, 256),
             nn.Dropout2d(p=0.5),
-            ConvBlock(256, 3, kernel_size=1, padding=0, relu=False),
-            # nn.Sigmoid()
-            nn.Softmax(dim=1)
+            ConvBlock(256, 1, kernel_size=1, padding=0, relu=False),
+            nn.Sigmoid()
         )
 
     def forward(self, x):
         x1 = self.stage1(x)
         x2 = self.stage2(x1)
         x3 = self.stage3(x2)
+
+        x1 = x1.permute(0, 3, 1, 2)
+        x2 = x2.permute(0, 3, 1, 2)
+        x3 = x3.permute(0, 3, 1, 2)
 
         x = self.dec3(x3)
         y3 = x
@@ -160,21 +162,20 @@ class DensityRegressor(nn.Module):
         y_cat = torch.cat([y1, y2, y3], dim=1)
 
         c = self.cls_head(x3)
-        resized_c = upsample(c, scale_factor=8, mode='nearest')
-        # d = self.den_head(y_cat) * resized_c
-        d = self.den_head(y_cat)
-        dc = upsample(d * (resized_c[:, 1:2, :, :] + 2 * resized_c[:, 2:3, :, :]), scale_factor=4)
+        resized_c = upsample(c, scale_factor=4, mode='nearest')
+        d = self.den_head(y_cat) * resized_c
+        d = upsample(d, scale_factor=4)
 
-        return dc, d, c
+        return d, c
     
-class DGCLS(nn.Module):
+class DGCLS_Swin(nn.Module):
     def __init__(self, pretrained=True):
         super().__init__()
         self.gen = Generator()
         self.reg = DensityRegressor(pretrained=pretrained)
 
     def _add_noise(self, x, n):
-        return n
+        return 0.5*x + 0.5*n
 
     def forward_gen(self, x, z=None):
         self.gen.requires_grad_(True)
@@ -184,9 +185,9 @@ class DGCLS(nn.Module):
         # n0 = self.gen.decode(f)
         x_n = self._add_noise(x, n)
 
-        dc_n, d_n, c_n = self.reg(x_n)
+        d_n, c_n = self.reg(x_n)
 
-        return dc_n, d_n, c_n, x_n
+        return d_n, c_n, x_n
     
     def forward_reg(self, x, z=None):
         self.gen.requires_grad_(False)
@@ -197,13 +198,12 @@ class DGCLS(nn.Module):
         x_n = self._add_noise(x, n)
         x_cat = torch.cat([x, x_n], dim=0)
 
-        dc_cat, d_cat, c_cat = self.reg(x_cat)
+        d_cat, c_cat = self.reg(x_cat)
 
-        dc, dc_n = torch.chunk(dc_cat, 2, dim=0)
         d, d_n = torch.chunk(d_cat, 2, dim=0)
         c, c_n = torch.chunk(c_cat, 2, dim=0)
 
-        return dc, dc_n, d, d_n, c, c_n
+        return d, d_n, c, c_n
     
     def forward(self, x):
         return self.reg(x)
@@ -213,13 +213,12 @@ class DGCLS(nn.Module):
         x_n = self._add_noise(x, n)
         x_cat = torch.cat([x, x_n], dim=0)
 
-        dc_cat, d_cat, c_cat = self.reg(x_cat)
+        d_cat, c_cat = self.reg(x_cat)
 
-        dc, dc_n = torch.chunk(dc_cat, 2, dim=0)
         d, d_n = torch.chunk(d_cat, 2, dim=0)
         c, c_n = torch.chunk(c_cat, 2, dim=0)
 
-        return dc, dc_n, d, d_n, c, c_n, x_n
+        return d, d_n, c, c_n, x_n
     
     def forward_test(self, x, z=None):
         n = self.gen(x)

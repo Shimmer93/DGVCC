@@ -1,35 +1,35 @@
 seed: 2112
-version: sta_reg
-device: 'cuda:3'
-mode: regression
+version: sta_reg2_test
+device: 'cuda:2'
 log_para: 1000
+mode: 'regression'
 num_epochs: &num_epochs 300
-checkpoint: '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_reg/best_115_69.74648697916668.pth'
+checkpoint: '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_reg2/best_239_70.8931.pth'
 model:
   name: 'dgnet'
   params:
     pretrained: True
 train_dataset: &train_dataset_params
-  name: 'den'
+  name: 'den_cls'
   params: 
     root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/sta'
     crop_size: 320
     downsample: 1
     is_grey: False
-    unit_size: 16
+    unit_size: 32
     pre_resize: 1
 val_dataset: *train_dataset_params
 test_dataset:
-  name: 'den'
+  name: 'den_cls'
   params: 
-    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/stb'
+    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/qnrf'
     crop_size: 320
     downsample: 1
     is_grey: False
-    unit_size: 16
+    unit_size: 32
     pre_resize: 1
 train_loader:
-  batch_size: 32
+  batch_size: 8
   num_workers: 16
   shuffle: True
   pin_memory: True

@@ -1,12 +1,10 @@
 seed: 2112
-version: sta_final3
-device: 'cuda:3'
+version: sta_final_trynew
+device: 'cuda:2'
 log_para: 1000
 mode: 'final'
 num_epochs: &num_epochs 300
-checkpoint:
-  - '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_joint3/last_gen.pth'
-  - '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_joint3/last_reg.pth'
+checkpoint: '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_final_trynew/best_250_94.4262.pth'
 model:
   name: 'dgnet'
   params:

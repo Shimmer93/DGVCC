@@ -30,26 +30,20 @@ class BaseDataset(Dataset):
         self.pre_resize = pre_resize
         self.roi_map = np.load(roi_map_path, allow_pickle=True).tolist() if roi_map_path is not None else None
 
-        if self.is_grey:
+        if self.method == 'train':
+            self.transform = T.Compose([
+                # T.RandomApply([T.ColorJitter(brightness=0.7, contrast=0.5, saturation=0.5, hue=0.2)], p=0.8),
+                # T.RandomApply([T.GaussianBlur(kernel_size=5, sigma=3)], p=0.2),
+                T.ToTensor(),
+                T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+                # T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+            ])
+        else:
             self.transform = T.Compose([
                 T.ToTensor(),
                 T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+                # T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
             ])
-        else:
-            if self.method == 'train':
-                self.transform = T.Compose([
-                    # T.RandomApply([T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2)], p=0.8),
-                    # T.RandomApply([T.GaussianBlur(kernel_size=3, sigma=3)], p=0.2),
-                    T.ToTensor(),
-                    T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
-                    # T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-                ])
-            else:
-                self.transform = T.Compose([
-                    T.ToTensor(),
-                    T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
-                    # T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-                ])
 
         if self.method not in ['train', 'val', 'test']:
             raise ValueError('method must be train, val or test')

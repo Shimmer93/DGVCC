@@ -41,6 +41,20 @@ class Trainer(object):
     def save_ckpt(self, model, path):
         torch.save(model.state_dict(), path)
 
+    def set_model_train(self, model):
+        if isinstance(model, nn.Module):
+            model.train()
+        else:
+            model[0].train()
+            model[1].train()
+
+    def set_model_eval(self, model):
+        if isinstance(model, nn.Module):
+            model.eval()
+        else:
+            model[0].eval()
+            model[1].eval()
+
     def train_step(self, model, loss, optimizer, batch, epoch):
         pass
 
@@ -57,10 +71,9 @@ class Trainer(object):
         self.log('Start training at {}'.format(get_current_datetime()))
         self.load_ckpt(model, checkpoint)
 
-        model = model.to(self.device)
+        model = model.to(self.device) if isinstance(model, nn.Module) else [m.to(self.device) for m in model]
         loss = loss.to(self.device)
         
-
         best_criterion = 1e10
         best_epoch = -1
 
@@ -71,7 +84,7 @@ class Trainer(object):
             seed_everything(self.seed + epoch)
 
             # Training
-            model.train()
+            self.set_model_train(model)
             for batch in easy_track(train_dataloader, description=f'Epoch {epoch}: Training...'):
                 train_loss = self.train_step(model, loss, optimizer, batch, epoch)
             if scheduler is not None:
@@ -83,7 +96,7 @@ class Trainer(object):
             self.log(f'Epoch {epoch}: Training loss: {train_loss:.4f} Version: {self.version}')
 
             # Validation
-            model.eval()
+            self.set_model_eval(model)
             criterion_meter = AverageMeter()
             for batch in easy_track(val_dataloader, description=f'Epoch {epoch}: Validating...'):
                 criterion = self.val_step(model, batch)
@@ -111,9 +124,9 @@ class Trainer(object):
         self.log('Start testing at {}'.format(get_current_datetime()))
         self.load_ckpt(model, checkpoint)
 
-        model = model.to(self.device)
+        model = model.to(self.device) if isinstance(model, nn.Module) else [m.to(self.device) for m in model]
 
-        model.eval()
+        self.set_model_eval(model)
         result_meter = DictAvgMeter()
         for batch in easy_track(test_dataloader, description='Testing...'):
             result = self.test_step(model, batch)
@@ -132,9 +145,9 @@ class Trainer(object):
 
         os.makedirs(os.path.join(self.log_dir, 'vis'), exist_ok=True)
 
-        model = model.to(self.device)
+        model = model.to(self.device) if isinstance(model, nn.Module) else [m.to(self.device) for m in model]
 
-        model.eval()
+        self.set_model_eval(model)
         for batch in easy_track(test_dataloader, description='Visualizing...'):
             self.vis_step(model, batch)
 

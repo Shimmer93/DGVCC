@@ -64,7 +64,7 @@ class DensityMapDataset(BaseDataset):
 
         # Resizing
         # factor = random.random() * 0.5 + 0.75
-        factor = self.pre_resize # * random.random() * 0.8 + 0.6
+        factor = self.pre_resize * (random.random() * 0.5 + 0.75)
         if factor != 1.0:
             new_w = (int)(w * factor)
             new_h = (int)(h * factor)

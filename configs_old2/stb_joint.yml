@@ -1,12 +1,10 @@
 seed: 2112
-version: sta_final3
-device: 'cuda:3'
+version: stb_joint_try
+device: 'cuda:0'
 log_para: 1000
-mode: 'final'
+mode: 'joint'
 num_epochs: &num_epochs 300
-checkpoint:
-  - '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_joint3/last_gen.pth'
-  - '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_joint3/last_reg.pth'
+checkpoint: '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/stb_joint_try/last.pth'
 model:
   name: 'dgnet'
   params:
@@ -14,21 +12,21 @@ model:
 train_dataset: &train_dataset_params
   name: 'den_cls'
   params: 
-    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/sta'
-    crop_size: 320
+    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/stb'
+    crop_size: 512
     downsample: 1
     is_grey: False
-    unit_size: 32
+    unit_size: 16
     pre_resize: 1
 val_dataset: *train_dataset_params
 test_dataset:
   name: 'den_cls'
   params: 
-    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/stb'
-    crop_size: 320
+    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/sta'
+    crop_size: 512
     downsample: 1
     is_grey: False
-    unit_size: 32
+    unit_size: 16
     pre_resize: 1
 train_loader:
   batch_size: 8

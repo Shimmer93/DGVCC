@@ -1,16 +1,16 @@
 seed: 2112
 version: sta_gen
-device: 'cuda:2'
-mode: generation
+device: 'cuda:3'
 log_para: 1000
+mode: 'generation'
 num_epochs: &num_epochs 300
-checkpoint: '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_gen/best_45_0.0668.pth'
+checkpoint: '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_gen/best_295_0.0273.pth'
 model:
   name: 'dgnet'
   params:
     pretrained: True
 train_dataset: &train_dataset_params
-  name: 'dual'
+  name: 'den_cls'
   params: 
     root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/sta'
     crop_size: 320
@@ -20,7 +20,7 @@ train_dataset: &train_dataset_params
     pre_resize: 1
 val_dataset: *train_dataset_params
 test_dataset:
-  name: 'dual'
+  name: 'den_cls'
   params: 
     root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/stb'
     crop_size: 320
@@ -29,7 +29,7 @@ test_dataset:
     unit_size: 16
     pre_resize: 1
 train_loader:
-  batch_size: 32
+  batch_size: 8
   num_workers: 16
   shuffle: True
   pin_memory: True
@@ -37,7 +37,7 @@ val_loader: &val_loader_params
   batch_size: 1
   num_workers: 4
   shuffle: False
-  pin_memory: True
+  pin_memory: False
 test_loader: *val_loader_params
 loss:
   name: 'mse'

@@ -15,9 +15,8 @@ from enum import Enum
 from PIL import Image
 from glob import glob
 
-from trainers.clstrainer import DGClsTrainer
-from models.dgcls import DensityRegressor, DGCLS
-from models.dgcls_swin import DGCLS_Swin
+from trainers.advtrainer import AdvTrainer
+from models.models import get_models
 from losses.bl import BL
 from datasets.den_dataset import DensityMapDataset
 from datasets.den_cls_dataset import DenClsDataset
@@ -25,12 +24,14 @@ from datasets.bay_dataset import BayesianDataset
 from datasets.dual_dataset import DualDataset
 from utils.misc import divide_img_into_patches, denormalize, AverageMeter, DictAvgMeter, seed_everything, get_current_datetime
 
-def get_model(name, params):
-    if name == 'dgcls' or name == 'dgnet':
-        model = DGCLS(**params)
+def get_model(name, params, mode):
+    gen, reg = get_models()
+    if mode == 'generation':
+        return gen
+    elif mode == 'regression':
+        return reg
     else:
-        model = DGCLS_Swin(**params)
-    return model
+        return [gen, reg]
 
 def get_loss(name, params):
     if name == 'bl':
@@ -60,29 +61,27 @@ def get_dataset(name, params, method):
 
 def get_optimizer(name, params, model):
     if name == 'sgd':
-        optimizer = torch.optim.SGD(model.parameters(), **params)
+        return torch.optim.SGD(model.parameters(), **params)
     elif name == 'adam':
-        optimizer = torch.optim.Adam(model.parameters(), **params)
+        return torch.optim.Adam(model.parameters(), **params)
     elif name == 'adamw':
-        optimizer = torch.optim.AdamW(model.parameters(), **params)
+        return torch.optim.AdamW(model.parameters(), **params)
     else:
         raise ValueError('Unknown optimizer: {}'.format(name))
-    return optimizer
 
 def get_scheduler(name, params, optimizer):
     if name == 'step':
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, **params)
+        return torch.optim.lr_scheduler.StepLR(optimizer, **params)
     elif name == 'multistep':
-        scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, **params)
+        return torch.optim.lr_scheduler.MultiStepLR(optimizer, **params)
     elif name == 'cosine':
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, **params)
+        return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, **params)
     elif name == 'plateau':
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, **params)
+        return torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, **params)
     elif name == 'onecycle':
-        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, **params)
+        return torch.optim.lr_scheduler.OneCycleLR(optimizer, **params)
     else:
         raise ValueError('Unknown scheduler: {}'.format(name))
-    return scheduler
 
 def load_config(config_path, task):
     with open(config_path, 'r') as f:
@@ -97,7 +96,14 @@ def load_config(config_path, task):
     init_params['log_para'] = cfg['log_para']
     init_params['mode'] = cfg['mode']
 
-    task_params['model'] = get_model(cfg['model']['name'], cfg['model']['params'])
+    gen, reg = get_models()
+    if cfg['mode'] == 'generation':
+        task_params['model'] = gen
+    elif cfg['mode'] == 'regression':
+        task_params['model'] = reg
+    else:
+        task_params['model'] = [gen, reg]
+
     task_params['checkpoint'] = cfg['checkpoint']
     
     if task == 'train':
@@ -106,16 +112,18 @@ def load_config(config_path, task):
         task_params['train_dataloader'] = DataLoader(train_dataset, collate_fn=collate, **cfg['train_loader'])
         val_dataset, _ = get_dataset(cfg['val_dataset']['name'], cfg['val_dataset']['params'], method='val')
         task_params['val_dataloader'] = DataLoader(val_dataset, **cfg['val_loader'])
-        # if cfg['mode'] == 'joint':
-        #     opt_reg = get_optimizer(cfg['optimizer']['name'], cfg['optimizer']['params'], task_params['model'].reg)
-        #     opt_gen = get_optimizer(cfg['optimizer']['name'], cfg['optimizer']['params'], task_params['model'].gen)
-        #     task_params['optimizer'] = [opt_reg, opt_gen]
-        #     sch_reg = get_scheduler(cfg['scheduler']['name'], cfg['scheduler']['params'], opt_reg)
-        #     sch_gen = get_scheduler(cfg['scheduler']['name'], cfg['scheduler']['params'], opt_gen)
-        #     task_params['scheduler'] = [sch_reg, sch_gen]
-        # else:
-        task_params['optimizer'] = get_optimizer(cfg['optimizer']['name'], cfg['optimizer']['params'], task_params['model'])
-        task_params['scheduler'] = get_scheduler(cfg['scheduler']['name'], cfg['scheduler']['params'], task_params['optimizer'])
+        if cfg['mode'] == 'generation' or cfg['mode'] == 'regression':
+            task_params['optimizer'] = get_optimizer(cfg['optimizer']['name'], cfg['optimizer']['params'], task_params['model'])
+            task_params['scheduler'] = get_scheduler(cfg['scheduler']['name'], cfg['scheduler']['params'], task_params['optimizer'])
+        else:
+            task_params['optimizer'] = [
+                get_optimizer(cfg['optimizer']['name'], cfg['optimizer']['params'], task_params['model'][0]),
+                get_optimizer(cfg['optimizer']['name'], cfg['optimizer']['params'], task_params['model'][1])
+            ]
+            task_params['scheduler'] = [
+                get_scheduler(cfg['scheduler']['name'], cfg['scheduler']['params'], task_params['optimizer'][0]),
+                get_scheduler(cfg['scheduler']['name'], cfg['scheduler']['params'], task_params['optimizer'][1])
+            ]
         task_params['num_epochs'] = cfg['num_epochs']
 
     else:
@@ -132,7 +140,7 @@ if __name__ == '__main__':
 
     init_params, task_params = load_config(args.config, args.task)
 
-    trainer = DGClsTrainer(**init_params)
+    trainer = AdvTrainer(**init_params)
     os.system(f'cp {args.config} {trainer.log_dir}')
 
     if args.task == 'train':
