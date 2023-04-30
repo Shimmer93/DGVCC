@@ -27,8 +27,7 @@ class DenClsDataset(DensityMapDataset):
         super().__init__(root, crop_size, downsample, method, is_grey, unit_size, pre_resize, roi_map_path, gt_dir, gen_root)
 
         self.more_transform = T.Compose([
-            T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.2),
-            T.GaussianBlur(kernel_size=5, sigma=3),
+            T.ColorJitter(brightness=0.5, contrast=0.3, saturation=0.3, hue=0.1),
             T.ToTensor(),
             T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
         ])
@@ -52,11 +51,13 @@ class DenClsDataset(DensityMapDataset):
                 dmap_fn = os.path.join(self.gt_dir, basename + '.npy')
             dmap = self._load_dmap(dmap_fn)
             img1, img2, gt, dmap = self._train_transform(img, gt, dmap)
-            bmap_orig = dmap.clone().reshape(1, dmap.shape[1]//32, 32, dmap.shape[2]//32, 32).sum(dim=(2, 4))
-            bmap = ((bmap_orig > 0).long() + (bmap_orig > 1).long()).squeeze(0)
+            # bmap_orig = dmap.clone().reshape(1, dmap.shape[1]//32, 32, dmap.shape[2]//32, 32).sum(dim=(2, 4))
+            # bmap = ((bmap_orig > 0).long() + (bmap_orig > 1).long()).squeeze(0)
+            bmap_orig = dmap.clone().reshape(1, dmap.shape[1]//16, 16, dmap.shape[2]//16, 16).sum(dim=(2, 4))
+            bmap = (bmap_orig > 0).float()
             return img1, img2, gt, dmap, bmap
         elif self.method in ['val', 'test']:
-            return tuple(self._val_transform(img, gt, basename))
+            return self._val_transform(img, gt, basename)
         
     def _train_transform(self, img, gt, dmap):
         w, h = img.size
@@ -70,19 +71,19 @@ class DenClsDataset(DensityMapDataset):
 
         # Resizing
         # factor = random.random() * 0.5 + 0.75
-        factor = self.pre_resize * (random.random() * 0.5 + 0.75)
-        if factor != 1.0:
-            new_w = (int)(w * factor)
-            new_h = (int)(h * factor)
-            # if min(new_w, new_h) >= min(self.crop_size[0], self.crop_size[1]):
-            w = new_w
-            h = new_h
-            img = img.resize((w, h))
-            dmap_sum = dmap.sum()
-            dmap = F.resize(dmap, (h, w))
-            new_dmap_sum = dmap.sum()
-            dmap = dmap * dmap_sum / new_dmap_sum
-            gt = gt * factor
+        # factor = self.pre_resize * (random.random() * 0.5 + 0.75)
+        # if factor != 1.0:
+        #     new_w = (int)(w * factor)
+        #     new_h = (int)(h * factor)
+        #     if min(new_w, new_h) >= min(self.crop_size[0], self.crop_size[1]):
+        #         w = new_w
+        #         h = new_h
+        #         img = img.resize((w, h))
+        #         dmap_sum = dmap.sum()
+        #         dmap = F.resize(dmap, (h, w))
+        #         new_dmap_sum = dmap.sum()
+        #         dmap = dmap * dmap_sum / new_dmap_sum
+        #         gt = gt * factor
         
         # Padding
         st_size = 1.0 * min(w, h)
@@ -133,19 +134,46 @@ class DenClsDataset(DensityMapDataset):
         dmap = dmap.float()
 
         return img1, img2, gt, dmap
+
+    def _val_transform(self, img, gt, name):
+        if self.pre_resize != 1:
+            img = img.resize((int(img.size[0] * self.pre_resize), int(img.size[1] * self.pre_resize)))
+
+        if self.unit_size is not None and self.unit_size > 0:
+            # Padding
+            w, h = img.size
+            new_w = (w // self.unit_size + 1) * self.unit_size if w % self.unit_size != 0 else w
+            new_h = (h // self.unit_size + 1) * self.unit_size if h % self.unit_size != 0 else h
+
+            padding, h, w = get_padding(h, w, new_h, new_w)
+            left, top, _, _ = padding
+
+            img = F.pad(img, padding)
+            if len(gt) > 0:
+                gt = gt + [left, top]
+        else:
+            padding = (0, 0, 0, 0)
+
+        # Downsampling
+        gt = gt / self.downsample
+
+        # Post-processing
+        img1 = self.transform(img)
+        img2 = self.more_transform(img)
+        gt = torch.from_numpy(gt.copy()).float()
+
+        return img1, img2, gt, name, padding
         
 if __name__ == '__main__':
-    dataset = DenClsDataset('/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/stb', 256, 1, 'train', False, 1)
+    dataset = DenClsDataset('/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/sta', 320, 1, 'train', False, 1)
 
     count0 = 0
     count1 = 0
-    count2 = 0
     for i in range(len(dataset)):
-        img, gt, dmap, bmap = dataset[30]
+        img, _, gt, dmap, bmap = dataset[i]
         # print(bmap)
         # break
         count0 += (bmap == 0).sum()
         count1 += (bmap == 1).sum()
-        count2 += (bmap >= 2).sum()
 
-    print(count0, count1, count2)
+    print(count0, count1)

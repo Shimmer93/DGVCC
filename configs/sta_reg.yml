@@ -1,10 +1,10 @@
 seed: 2112
-version: sta_reg2_test
+version: sta_reg9
 device: 'cuda:2'
 log_para: 1000
 mode: 'regression'
 num_epochs: &num_epochs 300
-checkpoint: '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_reg2/best_239_70.8931.pth'
+checkpoint: '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_reg9/best_191_77.4727.pth'
 model:
   name: 'dgnet'
   params:
@@ -29,7 +29,7 @@ test_dataset:
     unit_size: 32
     pre_resize: 1
 train_loader:
-  batch_size: 8
+  batch_size: 16
   num_workers: 16
   shuffle: True
   pin_memory: True

@@ -1,12 +1,12 @@
 seed: 2112
-version: sta_final3
-device: 'cuda:3'
+version: sta_final6
+device: 'cuda:0'
 log_para: 1000
 mode: 'final'
 num_epochs: &num_epochs 300
 checkpoint:
-  - '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_joint3/last_gen.pth'
-  - '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_joint3/last_reg.pth'
+  - '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_gen/best_295_0.0273.pth'
+  - '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_reg5/best_229_75.2760.pth'
 model:
   name: 'dgnet'
   params:
@@ -31,7 +31,7 @@ test_dataset:
     unit_size: 32
     pre_resize: 1
 train_loader:
-  batch_size: 8
+  batch_size: 1
   num_workers: 16
   shuffle: True
   pin_memory: True

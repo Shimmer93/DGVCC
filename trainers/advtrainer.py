@@ -17,7 +17,7 @@ from glob import glob
 
 from trainers.trainer import Trainer
 from losses.bl import BL
-from utils.misc import denormalize, divide_img_into_patches
+from utils.misc import denormalize, divide_img_into_patches, patchwise_random_rotate
 
 class AdvTrainer(Trainer):
     def __init__(self, seed, version, device, log_para, mode):
@@ -25,6 +25,7 @@ class AdvTrainer(Trainer):
 
         self.log_para = log_para
         self.mode = mode
+        self.augment = T.ColorJitter(brightness=0.5, contrast=0.3, saturation=0.3, hue=0.1)
 
     def load_ckpt(self, model, path):
         if isinstance(model, list):
@@ -79,19 +80,19 @@ class AdvTrainer(Trainer):
         patch_size = 1024
         if h >= patch_size or w >= patch_size:
             dmap = torch.zeros(1, 1, h, w)
-            bmap = torch.zeros(1, 3, h//32, w//32)
+            bmap = torch.zeros(1, 3, h//16, w//16)
             img_patches, nh, nw = divide_img_into_patches(img, patch_size)
             for i in range(nh):
                 for j in range(nw):
                     patch = img_patches[i*nw+j]
                     pred_dmap, _, pred_bmap = model(patch)
                     dmap[:, :, i*patch_size:(i+1)*patch_size, j*patch_size:(j+1)*patch_size] = pred_dmap
-                    bmap[:, :, i*patch_size//32:(i+1)*patch_size//32, j*patch_size//32:(j+1)*patch_size//32] = pred_bmap
+                    bmap[:, :, i*patch_size//16:(i+1)*patch_size//16, j*patch_size//16:(j+1)*patch_size//16] = pred_bmap
         else:
             dmap, _, bmap = model(img)
 
         dmap = dmap[0, 0].cpu().detach().numpy().squeeze()
-        bmap = bmap[0].cpu().detach().numpy().transpose(1, 2, 0)
+        bmap = bmap[0, 0].cpu().detach().numpy().squeeze()
 
         return dmap, bmap
     
@@ -104,7 +105,8 @@ class AdvTrainer(Trainer):
             optimizer.zero_grad()
             dmaps, _, bmaps = model(imgs1)
             loss_den = self.compute_count_loss(loss, dmaps, gt_datas)
-            loss_cls = F.cross_entropy(bmaps, gt_datas[-1].to(self.device).long())
+            loss_cls = F.binary_cross_entropy(bmaps, gt_datas[-1].to(self.device))
+            print(f'loss_den: {loss_den}, loss_cls: {loss_cls}')
             loss_total = loss_den + 10 * loss_cls
             loss_total.backward()
             optimizer.step()
@@ -120,58 +122,54 @@ class AdvTrainer(Trainer):
             model_gen, model_reg = model
             opt_gen, opt_reg = optimizer
 
-            opt_gen.zero_grad()
-            imgs_noisy = model_gen(imgs2)
-            dmaps, dmaps_raw, bmaps = model_reg(imgs1)
-            gt_bmaps_resized = F.interpolate(gt_datas[-1].to(self.device).float().unsqueeze(1), mode='nearest', scale_factor=32)
-            imgs_new = imgs2 * (gt_bmaps_resized > 0).float() + imgs_noisy * (gt_bmaps_resized == 0).float()
-            dmaps_noisy, dmaps_raw_noisy, bmaps_noisy = model_reg(imgs_new)
-            loss_dmap_raw = F.mse_loss(dmaps_raw, dmaps_raw_noisy)
-            loss_cls_noisy = F.cross_entropy(bmaps_noisy, (gt_datas[-1].to(self.device).long() + 1) % 3) + \
-                             F.cross_entropy(bmaps_noisy, (gt_datas[-1].to(self.device).long() + 2) % 3)
-            loss_rec = F.mse_loss(imgs_noisy, imgs2)
-            loss_gen = 10 * loss_dmap_raw + 10 * loss_cls_noisy + 1000 * loss_rec
-            # loss_gen = 10 * loss_cls_noisy + 10 * loss_rec
-            print(f'loss_dmap_raw: {loss_dmap_raw.item():.4f}, loss_cls_noisy: {loss_cls_noisy.item():.4f}, loss_rec: {loss_rec.item():.4f}')
-            # print(f'loss_cls_noisy: {loss_cls_noisy.item():.4f}, loss_rec: {loss_rec.item():.4f}')
-            loss_gen.backward()
-            opt_gen.step()
+            # imgs2 = patchwise_random_rotate(imgs2, gt_datas[-1].to(self.device))
 
-            opt_reg.zero_grad()
-            imgs_noisy = model_gen(imgs2)
-            dmaps, dmaps_raw, bmaps = model_reg(imgs1)
-            gt_bmaps_resized = F.interpolate(gt_datas[-1].to(self.device).float().unsqueeze(1), mode='nearest', scale_factor=32)
-            imgs_new = imgs2 * (gt_bmaps_resized > 0).float() + imgs_noisy * (gt_bmaps_resized == 0).float()
-            dmaps_noisy, dmaps_raw_noisy, bmaps_noisy = model_reg(imgs_new)
-            loss_dmap = self.compute_count_loss(loss, dmaps, gt_datas)
-            loss_dmap_noisy = self.compute_count_loss(loss, dmaps_noisy, gt_datas)
-            loss_cls = F.cross_entropy(bmaps, gt_datas[-1].to(self.device).long())
-            loss_cls_noisy = F.cross_entropy(bmaps_noisy, gt_datas[-1].to(self.device).long())
-            loss_dmap_sim = F.mse_loss(dmaps_raw, dmaps_raw_noisy)
-            loss_cls_sim = F.cross_entropy(bmaps_noisy, bmaps)
-            print(f'loss_dmap: {loss_dmap.item():.4f}, loss_dmap_noisy: {loss_dmap_noisy.item():.4f}, loss_cls: {loss_cls.item():.4f}, loss_cls_noisy: {loss_cls_noisy.item():.4f}, loss_dmap_sim: {loss_dmap_sim.item():.4f}, loss_cls_sim: {loss_cls_sim.item():.4f}')
-            loss_reg = loss_dmap + loss_dmap_noisy + loss_dmap_sim + 10 * (loss_cls + loss_cls_noisy + loss_cls_sim)
-            loss_reg.backward()
-            opt_reg.step()
+            with torch.autograd.detect_anomaly():
+                opt_gen.zero_grad()
+                imgs_noisy = model_gen(imgs2)
+                dmaps, dmaps_raw, bmaps = model_reg(imgs1)
+                dmaps_noisy, dmaps_raw_noisy, bmaps_noisy = model_reg(imgs_noisy)
+                # loss_dmap_raw = F.mse_loss(dmaps_raw, dmaps_raw_noisy)
+                loss_cls_noisy = F.mse_loss(bmaps_noisy, 1-gt_datas[-1].to(self.device))
+                loss_rec = F.mse_loss(imgs_noisy, imgs2)
+                loss_gen = 10 * loss_cls_noisy + 1000 * loss_rec
+                print(f'loss_cls_noisy: {loss_cls_noisy:.4f}')
+                loss_gen.backward()
+                opt_gen.step()
 
-            loss_total = loss_reg + loss_gen
+                opt_reg.zero_grad()
+                imgs_noisy = model_gen(imgs2)
+                dmaps, dmaps_raw, bmaps = model_reg(imgs1)
+                dmaps_noisy, dmaps_raw_noisy, bmaps_noisy = model_reg(imgs_noisy)
+                loss_dmap = self.compute_count_loss(loss, dmaps, gt_datas)
+                loss_dmap_noisy = self.compute_count_loss(loss, dmaps_noisy, gt_datas)
+                loss_cls = F.mse_loss(bmaps, gt_datas[-1].to(self.device))
+                loss_cls_noisy = F.mse_loss(bmaps_noisy, gt_datas[-1].to(self.device))
+                loss_dmap_sim = F.mse_loss(dmaps_raw, dmaps_raw_noisy)
+                loss_cls_sim = F.mse_loss(bmaps_noisy, bmaps)
+                print(f'loss_dmap: {loss_dmap.item():.4f}, loss_dmap_noisy: {loss_dmap_noisy.item():.4f}, loss_cls: {loss_cls.item():.4f}, loss_cls_noisy: {loss_cls_noisy.item():.4f}, loss_dmap_sim: {loss_dmap_sim.item():.4f}, loss_cls_sim: {loss_cls_sim.item():.4f}')
+                loss_reg = loss_dmap + loss_dmap_noisy + loss_dmap_sim + 10 * (loss_cls + loss_cls_noisy + loss_cls_sim)
+                loss_reg.backward()
+                opt_reg.step()
+
+                loss_total = loss_reg + loss_gen
 
         else:
             model_gen, model_reg = model
             opt_gen, opt_reg = optimizer
 
+            # imgs_noisy = patchwise_random_rotate(imgs2, gt_datas[-1].to(self.device))
+
             opt_reg.zero_grad()
             imgs_noisy = model_gen(imgs2)
             dmaps, dmaps_raw, bmaps = model_reg(imgs1)
-            gt_bmaps_resized = F.interpolate(gt_datas[-1].to(self.device).float().unsqueeze(1), mode='nearest', scale_factor=32)
-            imgs_new = imgs2 * (gt_bmaps_resized > 0).float() + imgs_noisy * (gt_bmaps_resized == 0).float()
-            dmaps_noisy, dmaps_raw_noisy, bmaps_noisy = model_reg(imgs_new)
+            dmaps_noisy, dmaps_raw_noisy, bmaps_noisy = model_reg(imgs_noisy)
             loss_dmap = self.compute_count_loss(loss, dmaps, gt_datas)
             loss_dmap_noisy = self.compute_count_loss(loss, dmaps_noisy, gt_datas)
-            loss_cls = F.cross_entropy(bmaps, gt_datas[-1].to(self.device).long())
-            loss_cls_noisy = F.cross_entropy(bmaps_noisy, gt_datas[-1].to(self.device).long())
+            loss_cls = F.binary_cross_entropy(bmaps, gt_datas[-1].to(self.device))
+            loss_cls_noisy = F.binary_cross_entropy(bmaps_noisy, gt_datas[-1].to(self.device))
             loss_dmap_sim = F.mse_loss(dmaps_raw, dmaps_raw_noisy)
-            loss_cls_sim = F.cross_entropy(bmaps_noisy, bmaps)
+            loss_cls_sim = F.binary_cross_entropy(bmaps_noisy, bmaps)
             # print(f'loss_dmap: {loss_dmap.item():.4f}, loss_dmap_noisy: {loss_dmap_noisy.item():.4f}, loss_cls: {loss_cls.item():.4f}, loss_cls_noisy: {loss_cls_noisy.item():.4f}, loss_dmap_sim: {loss_dmap_sim.item():.4f}, loss_cls_sim: {loss_cls_sim.item():.4f}')
             loss_total = loss_dmap + loss_dmap_noisy + loss_dmap_sim + 10 * (loss_cls + loss_cls_noisy + loss_cls_sim)
             loss_total.backward()
@@ -180,68 +178,71 @@ class AdvTrainer(Trainer):
         return loss_total.detach().item()
 
     def val_step(self, model, batch):
-        img, gt, _, _ = batch
-        img = img.to(self.device)
+        img1, img2, gt, _, _ = batch
+        img1 = img1.to(self.device)
+        img2 = img2.to(self.device)
 
         if self.mode == 'regression':
-            pred_count = self.predict(model, img)
+            pred_count = self.predict(model, img1)
             gt_count = gt.shape[1]
             mae = np.abs(pred_count - gt_count)
             return mae
         
         elif self.mode == 'generation':
-            img_rec = model(img)
-            loss = F.mse_loss(img_rec, img)
+            img_rec = model(img1)
+            loss = F.mse_loss(img_rec, img1)
             return loss.detach().item()
         
         else:
             gen, reg = model
-            # img_noisy = gen(img)
-            pred_count = self.predict(reg, img)
-            # noisy_count = self.predict(reg, img_noisy)
+            img_noisy = gen(img2)
+            pred_count = self.predict(reg, img1)
+            noisy_count = self.predict(reg, img_noisy)
             gt_count = gt.shape[1]
-            # mae = np.abs((pred_count+noisy_count)/2 - gt_count)
-            mae = np.abs(pred_count - gt_count)
+            mae = np.abs((pred_count+noisy_count)/2 - gt_count)
+            # mae = np.abs(pred_count - gt_count)
             return mae
         
     def test_step(self, model, batch):
-        img, gt, _, _ = batch
-        img = img.to(self.device)
+        img1, img2, gt, _, _ = batch
+        img1 = img1.to(self.device)
+        img2 = img2.to(self.device)
 
         if self.mode == 'regression':
-            pred_count = self.predict(model, img)
+            pred_count = self.predict(model, img1)
             gt_count = gt.shape[1]
             mae = np.abs(pred_count - gt_count)
             mse = (pred_count - gt_count) ** 2
             return {'mae': mae, 'mse': mse}
         
         elif self.mode == 'generation':
-            img, gt, _, _ = batch
-            img = img.to(self.device)
-            img_rec = model(img)
-            loss = F.mse_loss(img_rec, img)
+            img_rec = model(img1)
+            loss = F.mse_loss(img_rec, img1)
             return {'loss': loss.detach().item()}
         
         else:
             _, reg = model
-            pred_count = self.predict(reg, img)
+            pred_count = self.predict(reg, img1)
             gt_count = gt.shape[1]
             mae = np.abs(pred_count - gt_count)
             mse = (pred_count - gt_count) ** 2
             return {'mae': mae, 'mse': mse}
         
     def vis_step(self, model, batch):
-        img, gt, name, _ = batch
+        img1, img2, gt, name, _ = batch
         vis_dir = os.path.join(self.log_dir, 'vis')
-        img = img.to(self.device)
+        img1 = img1.to(self.device)
+        img2 = img2.to(self.device)
 
         if self.mode == 'regression':
-            pred_dmap, pred_bmap = self.get_visualized_results(model, img)
-            img = denormalize(img.detach())[0].cpu().permute(1, 2, 0).numpy()
+            pred_dmap, pred_bmap = self.get_visualized_results(model, img1)
+            img1 = denormalize(img1.detach())[0].cpu().permute(1, 2, 0).numpy()
             pred_count = pred_dmap.sum() / self.log_para
             gt_count = gt.shape[1]
 
-            datas = [img, pred_dmap, pred_bmap]
+            print(pred_bmap.max(), pred_bmap.min())
+
+            datas = [img1, pred_dmap, pred_bmap]
             titles = [f'GT: {gt_count}', f'Pred: {pred_count}', 'Cls']
 
             fig = plt.figure(figsize=(20, 6))
@@ -254,11 +255,11 @@ class AdvTrainer(Trainer):
             plt.close()
 
         elif self.mode == 'generation':
-            img_rec = model(img)
-            img = denormalize(img.detach())[0].cpu().permute(1, 2, 0).numpy()
+            img_rec = model(img1)
+            img1 = denormalize(img1.detach())[0].cpu().permute(1, 2, 0).numpy()
             img_rec = denormalize(img_rec.detach())[0].cpu().permute(1, 2, 0).numpy()
 
-            datas = [img, img_rec]
+            datas = [img1, img_rec]
             titles = ['Input', 'Reconstruction']
 
             fig = plt.figure(figsize=(20, 6))
@@ -272,16 +273,17 @@ class AdvTrainer(Trainer):
 
         else:
             gen, reg = model
-            img_noisy = gen(img)
-            pred_dmap, pred_bmap = self.get_visualized_results(reg, img)
+            pred_dmap, pred_bmap = self.get_visualized_results(reg, img1)
+            img2 = patchwise_random_rotate(img2, torch.from_numpy(pred_bmap).unsqueeze(0).unsqueeze(0).to(self.device))
+            img_noisy = gen(img2)
             noisy_dmap, noisy_bmap = self.get_visualized_results(reg, img_noisy)
-            img = denormalize(img.detach())[0].cpu().permute(1, 2, 0).numpy()
+            img1 = denormalize(img1.detach())[0].cpu().permute(1, 2, 0).numpy()
             img_noisy = denormalize(img_noisy.detach())[0].cpu().permute(1, 2, 0).numpy()
             pred_count = pred_dmap.sum() / self.log_para
             noisy_count = noisy_dmap.sum() / self.log_para
             gt_count = gt.shape[1]
 
-            datas = [img, pred_dmap, pred_bmap, img_noisy, noisy_dmap, noisy_bmap]
+            datas = [img1, pred_dmap, pred_bmap, img_noisy, noisy_dmap, noisy_bmap]
             titles = [f'GT: {gt_count}', f'Pred: {pred_count}', 'Cls', 'Rec', f'Noisy: {noisy_count}', 'Noisy_Cls']
 
             fig = plt.figure(figsize=(20, 6))

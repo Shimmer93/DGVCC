@@ -1,10 +1,10 @@
 seed: 2112
-version: stb_reg_try2
+version: stb_reg
 device: 'cuda:3'
 log_para: 1000
 mode: 'regression'
 num_epochs: &num_epochs 300
-checkpoint: '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/stb_reg_try2/best_290_6.9277.pth'
+checkpoint: null
 model:
   name: 'dgnet'
   params:
@@ -22,7 +22,7 @@ val_dataset: *train_dataset_params
 test_dataset:
   name: 'den_cls'
   params: 
-    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/qnrf'
+    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/sta'
     crop_size: 512
     downsample: 1
     is_grey: False

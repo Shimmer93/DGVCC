@@ -1,12 +1,12 @@
 seed: 2112
-version: sta_joint3
-device: 'cuda:1'
+version: sta_joint16
+device: 'cuda:3'
 log_para: 1000
 mode: 'joint'
 num_epochs: &num_epochs 300
 checkpoint:
-  - '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_joint3/last_gen.pth'
-  - '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_joint3/last_reg.pth'
+  - '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_joint16/last_gen.pth'
+  - '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_joint16/last_reg.pth'
 model:
   name: 'dgnet'
   params:

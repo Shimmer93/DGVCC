@@ -1,6 +1,8 @@
 from PIL import Image
 import numpy as np
 import torch
+import torchvision.transforms.functional as F
+from einops import rearrange
 from rich.progress import track
 
 import random
@@ -128,3 +130,22 @@ def get_current_datetime():
 
 def easy_track(iterable, description=None):
     return track(iterable, description=description, complete_style='dim cyan', total=len(iterable))
+
+def patchwise_random_rotate(imgs, bmaps):
+    # print(bmaps.max(), bmaps.min())
+
+    assert len(imgs) == len(bmaps)
+    b, c, H, W = imgs.shape
+    patched_imgs = rearrange(imgs, 'b c (h p1) (w p2) -> (b h w) c p1 p2', p1=16, p2=16)
+    patched_bmaps = rearrange(bmaps, 'b 1 h w -> (b h w)')
+
+    for i in range(len(patched_imgs)):
+        if patched_bmaps[i] > 0.5:
+            continue
+        elif random.random() < 0.2:
+            rand_num = random.randint(1, 3)
+            patched_imgs[i] = F.rotate(patched_imgs[i], 90 * rand_num)
+
+    rotated_imgs = rearrange(patched_imgs, '(b h w) c p1 p2 -> b c (h p1) (w p2)', h=H//16, w=W//16, p1=16, p2=16)
+
+    return rotated_imgs

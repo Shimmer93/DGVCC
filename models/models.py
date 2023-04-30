@@ -49,87 +49,9 @@ class Generator(nn.Module):
         )
 
     def forward(self, x):
-        x = self.enc(x)
-        x = self.dec(x)
-        return x
-    
-    def set_requires_grad(self, requires_grad):
-        for param in self.parameters():
-            param.requires_grad = requires_grad
-    
-class DensityRegressor2(nn.Module):
-    def __init__(self, pretrained=True):
-        super().__init__()
-        vgg = models.vgg16_bn(weights=models.VGG16_BN_Weights.DEFAULT if pretrained else None)
-        self.stage1 = nn.Sequential(*list(vgg.features.children())[:23])
-        self.stage2 = nn.Sequential(*list(vgg.features.children())[23:33])
-        self.stage3 = nn.Sequential(*list(vgg.features.children())[33:43])
-
-        self.dec3 = nn.Sequential(
-            ConvBlock(512, 1024, bn=True),
-            ConvBlock(1024, 512, bn=True)
-        )
-
-        self.dec2 = nn.Sequential(
-            ConvBlock(1024, 512, bn=True),
-            ConvBlock(512, 256, bn=True)
-        )
-
-        self.dec1 = nn.Sequential(
-            ConvBlock(512, 256, bn=True),
-            ConvBlock(256, 128, bn=True)
-        )
-
-        self.den_head = nn.Sequential(
-            ConvBlock(512+256+128, 256, kernel_size=1, padding=0),
-            ConvBlock(256, 256),
-            ConvBlock(256, 256),
-            nn.Dropout2d(p=0.5),
-            ConvBlock(256, 2, kernel_size=1, padding=0, relu=False),
-        )
-
-        self.cls_head = nn.Sequential(
-            ConvBlock(512, 512),
-            ConvBlock(512, 512),
-            ConvBlock(512, 256),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            ConvBlock(256, 256),
-            ConvBlock(256, 256),
-            nn.Dropout2d(p=0.5),
-            ConvBlock(256, 3, kernel_size=1, padding=0, relu=False),
-            nn.Softmax(dim=1)
-        )
-
-    def forward(self, x):
-        x1 = self.stage1(x)
-        x2 = self.stage2(x1)
-        x3 = self.stage3(x2)
-
-        x = self.dec3(x3)
-        y3 = x
-        x = upsample(x, scale_factor=2)
-        x = torch.cat([x, x2], dim=1)
-
-        x = self.dec2(x)
-        y2 = x
-        x = upsample(x, scale_factor=2)
-        x = torch.cat([x, x1], dim=1)
-
-        x = self.dec1(x)
-        y1 = x
-
-        y2 = upsample(y2, scale_factor=2)
-        y3 = upsample(y3, scale_factor=4)
-
-        y_cat = torch.cat([y1, y2, y3], dim=1)
-
-        c = self.cls_head(x3)
-        resized_c = upsample(c, scale_factor=8, mode='nearest')
-        d = self.den_head(y_cat)
-        dc = d[:, 0:1] * resized_c[:, 1:3].sum(dim=1, keepdim=True) + d[:, 1:2] * resized_c[:, 2:3]
-        dc = upsample(dc, scale_factor=4)
-
-        return dc, d, c
+        y = self.enc(x)
+        y = self.dec(y)
+        return y
     
 class DensityRegressor(nn.Module):
     def __init__(self, pretrained=True):
@@ -156,8 +78,11 @@ class DensityRegressor(nn.Module):
 
         self.den_head = nn.Sequential(
             ConvBlock(512+256+128, 256, kernel_size=1, padding=0),
+            nn.Dropout2d(p=0.2),
             ConvBlock(256, 256),
+            nn.Dropout2d(p=0.2),
             ConvBlock(256, 256),
+            nn.Dropout2d(p=0.2),
             ConvBlock(256, 1, kernel_size=1, padding=0)
         )
 
@@ -165,11 +90,10 @@ class DensityRegressor(nn.Module):
             ConvBlock(512, 512),
             ConvBlock(512, 512),
             ConvBlock(512, 256),
-            nn.MaxPool2d(kernel_size=2, stride=2),
             ConvBlock(256, 256),
             ConvBlock(256, 256),
-            ConvBlock(256, 3, kernel_size=1, padding=0, relu=False),
-            nn.Softmax(dim=1)
+            ConvBlock(256, 1, kernel_size=1, padding=0, relu=False),
+            nn.Sigmoid()
         )
 
     def forward(self, x):
@@ -196,16 +120,12 @@ class DensityRegressor(nn.Module):
         y_cat = torch.cat([y1, y2, y3], dim=1)
 
         c = self.cls_head(x3)
-        resized_c = upsample(c, scale_factor=8, mode='nearest')
+        resized_c = upsample(c, scale_factor=4, mode='nearest')
         d = self.den_head(y_cat)
-        dc = d * resized_c[:, 1:3].sum(dim=1, keepdim=True)
+        dc = d * resized_c
         dc = upsample(dc, scale_factor=4)
 
         return dc, d, c
-    
-    def set_requires_grad(self, requires_grad):
-        for param in self.parameters():
-            param.requires_grad = requires_grad
 
 def get_models():
     gen = Generator()
