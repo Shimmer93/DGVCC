@@ -1,12 +1,12 @@
 seed: 2112
-version: sta_joint16
-device: 'cuda:3'
+version: sta_joint17
+device: 'cuda:1'
 log_para: 1000
 mode: 'joint'
 num_epochs: &num_epochs 300
 checkpoint:
-  - '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_joint16/last_gen.pth'
-  - '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_joint16/last_reg.pth'
+  - '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_joint17/best_62_89.6552_gen.pth'
+  - '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_joint17/best_62_89.6552_reg.pth'
 model:
   name: 'dgnet'
   params:
@@ -24,7 +24,7 @@ val_dataset: *train_dataset_params
 test_dataset:
   name: 'den_cls'
   params: 
-    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/stb'
+    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/qnrf'
     crop_size: 320
     downsample: 1
     is_grey: False

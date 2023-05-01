@@ -68,8 +68,12 @@ def divide_img_into_patches(img, patch_size):
 
 def denormalize(img_tensor):
     # denormalize a image tensor
-    img_tensor = img_tensor * torch.tensor([0.5, 0.5, 0.5]).view(3, 1, 1).to(img_tensor.device)
-    img_tensor = img_tensor + torch.tensor([0.5, 0.5, 0.5]).view(3, 1, 1).to(img_tensor.device)
+    if len(img_tensor.shape) == 3:
+        img_tensor = img_tensor * torch.tensor([0.5, 0.5, 0.5]).view(3, 1, 1).to(img_tensor.device)
+        img_tensor = img_tensor + torch.tensor([0.5, 0.5, 0.5]).view(3, 1, 1).to(img_tensor.device)
+    elif len(img_tensor.shape) == 4:
+        img_tensor = img_tensor * torch.tensor([0.5, 0.5, 0.5]).view(1, 3, 1, 1).to(img_tensor.device)
+        img_tensor = img_tensor + torch.tensor([0.5, 0.5, 0.5]).view(1, 3, 1, 1).to(img_tensor.device)
     # img_tensor = img_tensor * torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1).to(img_tensor.device)
     # img_tensor = img_tensor + torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1).to(img_tensor.device)
     return img_tensor

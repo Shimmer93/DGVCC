@@ -4,7 +4,7 @@ device: 'cuda:3'
 log_para: 1000
 mode: 'regression'
 num_epochs: &num_epochs 300
-checkpoint: null
+checkpoint: '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/stb_reg/best_168_7.3808.pth'
 model:
   name: 'dgnet'
   params:
@@ -22,7 +22,7 @@ val_dataset: *train_dataset_params
 test_dataset:
   name: 'den_cls'
   params: 
-    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/sta'
+    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/qnrf'
     crop_size: 512
     downsample: 1
     is_grey: False
