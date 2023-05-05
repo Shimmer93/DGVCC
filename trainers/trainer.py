@@ -31,7 +31,10 @@ class Trainer(object):
         if verbose:
             print(msg, **kwargs)
         with open(os.path.join(self.log_dir, 'log.txt'), 'a') as f:
-            f.write(msg + '\n')
+            if 'end' in kwargs:
+                f.write(msg + kwargs['end'])
+            else:
+                f.write(msg + '\n')
 
     def load_ckpt(self, model, path):
         if path is not None:
@@ -67,6 +70,51 @@ class Trainer(object):
     def vis_step(self, model, batch):
         pass
 
+    def train_epoch(self, model, loss, train_dataloader, val_dataloader, optimizer, scheduler, epoch, best_criterion, best_epoch):
+        start_time = time.time()
+
+        seed_everything(self.seed + epoch)
+
+        # Training
+        self.set_model_train(model)
+        for batch in easy_track(train_dataloader, description=f'Epoch {epoch}: Training...'):
+            train_loss = self.train_step(model, loss, optimizer, batch, epoch)
+        if scheduler is not None:
+            if isinstance(scheduler, list):
+                for s in scheduler:
+                    s.step()
+            else:
+                scheduler.step()
+        self.log(f'Epoch {epoch}: Training loss: {train_loss:.4f} Version: {self.version}')
+
+        # Validation
+        self.set_model_eval(model)
+        criterion_meter = AverageMeter()
+        additional_meter = DictAvgMeter()
+        for batch in easy_track(val_dataloader, description=f'Epoch {epoch}: Validating...'):
+            criterion, additional = self.val_step(model, batch)
+            criterion_meter.update(criterion)
+            additional_meter.update(additional)
+        current_criterion = criterion_meter.avg
+        self.log(f'Epoch {epoch}: Val criterion: {current_criterion:.4f}', end=' ')
+        for k, v in additional_meter.avg.items():
+            self.log(f'{k}: {v:.4f}', end=' ')
+        self.log(f'best: {best_criterion:.4f}, time: {time.time() - start_time:.4f}')
+
+        # Checkpoint
+        if epoch > 0:
+            os.remove(glob(os.path.join(self.log_dir, 'last*.pth'))[0])
+        self.save_ckpt(model, os.path.join(self.log_dir, f'last.pth'))
+        if current_criterion < best_criterion:
+            best_criterion = current_criterion
+            best_epoch = epoch
+            self.log(f'Epoch {epoch}: saving best model...')
+            if epoch > 0:
+                os.remove(glob(os.path.join(self.log_dir, 'best*.pth'))[0])
+            self.save_ckpt(model, os.path.join(self.log_dir, f'best_{best_epoch}_{best_criterion:.4f}.pth'))
+
+        return best_criterion, best_epoch
+        
     def train(self, model, loss, train_dataloader, val_dataloader, optimizer, scheduler, checkpoint=None, num_epochs=100):
         self.log('Start training at {}'.format(get_current_datetime()))
         self.load_ckpt(model, checkpoint)
@@ -78,49 +126,14 @@ class Trainer(object):
         best_epoch = -1
 
         for epoch in range(num_epochs):
-
-            start_time = time.time()
-
-            seed_everything(self.seed + epoch)
-
-            # Training
-            self.set_model_train(model)
-            for batch in easy_track(train_dataloader, description=f'Epoch {epoch}: Training...'):
-                train_loss = self.train_step(model, loss, optimizer, batch, epoch)
-            if scheduler is not None:
-                if isinstance(scheduler, list):
-                    for s in scheduler:
-                        s.step()
-                else:
-                    scheduler.step()
-            self.log(f'Epoch {epoch}: Training loss: {train_loss:.4f} Version: {self.version}')
-
-            # Validation
-            self.set_model_eval(model)
-            criterion_meter = AverageMeter()
-            for batch in easy_track(val_dataloader, description=f'Epoch {epoch}: Validating...'):
-                criterion = self.val_step(model, batch)
-                criterion_meter.update(criterion)
-            current_criterion = criterion_meter.avg
-            self.log(f'Epoch {epoch}: Val criterion: {current_criterion:.4f}, best: {best_criterion:.4f}, time: {time.time() - start_time:.4f}')
-
-            # Checkpoint
-            if epoch > 0:
-                os.remove(glob(os.path.join(self.log_dir, 'last*.pth'))[0])
-            self.save_ckpt(model, os.path.join(self.log_dir, f'last.pth'))
-            if current_criterion < best_criterion:
-                best_criterion = current_criterion
-                best_epoch = epoch
-                self.log(f'Epoch {epoch}: saving best model...')
-                if epoch > 0:
-                    os.remove(glob(os.path.join(self.log_dir, 'best*.pth'))[0])
-                self.save_ckpt(model, os.path.join(self.log_dir, f'best_{best_epoch}_{best_criterion:.4f}.pth'))
+            best_criterion, best_epoch = self.train_epoch(
+                model, loss, train_dataloader, val_dataloader, optimizer, scheduler, epoch, best_criterion, best_epoch)
 
         self.log('Best epoch: {}, best criterion: {}'.format(best_epoch, best_criterion))
         self.log('Training results saved to {}'.format(self.log_dir))
         self.log('End training at {}'.format(get_current_datetime()))
 
-    def test(self, model, test_dataloader, checkpoint):
+    def test(self, model, test_dataloader, checkpoint=None):
         self.log('Start testing at {}'.format(get_current_datetime()))
         self.load_ckpt(model, checkpoint)
 
@@ -139,7 +152,7 @@ class Trainer(object):
         self.log('Testing results saved to {}'.format(self.log_dir))
         self.log('End testing at {}'.format(get_current_datetime()))
 
-    def vis(self, model, test_dataloader, checkpoint):
+    def vis(self, model, test_dataloader, checkpoint=None):
         self.log('Start visualization at {}'.format(get_current_datetime()))
         self.load_ckpt(model, checkpoint)
 

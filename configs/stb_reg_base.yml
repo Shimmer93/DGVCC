@@ -1,10 +1,9 @@
 seed: 2112
-version: sta_gen2
-device: 'cuda:3'
+version: stb_reg_base_cls
+device: 'cuda:2'
 log_para: 1000
-mode: 'generation'
-num_epochs: &num_epochs 300
-checkpoint: null
+num_epochs: &num_epochs 100
+checkpoint: /mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/stb_reg_base_cls/best_85_9.4576.pth
 model:
   name: 'dgnet'
   params:
@@ -12,8 +11,8 @@ model:
 train_dataset: &train_dataset_params
   name: 'den_cls'
   params: 
-    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/sta'
-    crop_size: 320
+    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/stb'
+    crop_size: 512
     downsample: 1
     is_grey: False
     unit_size: 16
@@ -22,14 +21,14 @@ val_dataset: *train_dataset_params
 test_dataset:
   name: 'den_cls'
   params: 
-    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/stb'
-    crop_size: 320
+    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/sta'
+    crop_size: 512
     downsample: 1
     is_grey: False
     unit_size: 16
     pre_resize: 1
 train_loader:
-  batch_size: 8
+  batch_size: 16
   num_workers: 16
   shuffle: True
   pin_memory: True
@@ -46,10 +45,11 @@ loss:
 optimizer:
   name: 'adamw'
   params:
-    lr: 0.0001
+    lr: &lr 0.001
     weight_decay: 0.0001
 scheduler:
-  name: 'step'
+  name: 'onecycle'
   params:
-    step_size: 1
-    gamma: 0.995
+    max_lr: *lr
+    epochs: *num_epochs
+    steps_per_epoch: 20

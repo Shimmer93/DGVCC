@@ -1,10 +1,10 @@
 seed: 2112
-version: stb_gen_try
+version: stb_gen
 device: 'cuda:2'
 log_para: 1000
 mode: 'generation'
 num_epochs: &num_epochs 300
-checkpoint: '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/stb_reg_try/best_258_7.2240.pth'
+checkpoint: null
 model:
   name: 'dgnet'
   params:

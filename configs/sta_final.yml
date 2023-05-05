@@ -1,12 +1,12 @@
 seed: 2112
-version: sta_final6
+version: sta_final22
 device: 'cuda:0'
 log_para: 1000
 mode: 'final'
-num_epochs: &num_epochs 300
+num_epochs: &num_epochs 100
 checkpoint:
-  - '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_gen/best_295_0.0273.pth'
-  - '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_reg5/best_229_75.2760.pth'
+  - null
+  - /mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_final22/best_98_166.5430_reg.pth
 model:
   name: 'dgnet'
   params:
@@ -18,20 +18,20 @@ train_dataset: &train_dataset_params
     crop_size: 320
     downsample: 1
     is_grey: False
-    unit_size: 32
+    unit_size: 16
     pre_resize: 1
 val_dataset: *train_dataset_params
 test_dataset:
   name: 'den_cls'
   params: 
-    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/stb'
+    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/qnrf'
     crop_size: 320
     downsample: 1
     is_grey: False
-    unit_size: 32
+    unit_size: 16
     pre_resize: 1
 train_loader:
-  batch_size: 1
+  batch_size: 8
   num_workers: 16
   shuffle: True
   pin_memory: True
@@ -48,10 +48,11 @@ loss:
 optimizer:
   name: 'adamw'
   params:
-    lr: 0.0001
+    lr: &lr 0.001
     weight_decay: 0.0001
 scheduler:
-  name: 'step'
+  name: 'onecycle'
   params:
-    step_size: 1
-    gamma: 0.995
+    max_lr: *lr
+    epochs: *num_epochs
+    steps_per_epoch: 30

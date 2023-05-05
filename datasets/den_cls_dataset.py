@@ -27,7 +27,9 @@ class DenClsDataset(DensityMapDataset):
         super().__init__(root, crop_size, downsample, method, is_grey, unit_size, pre_resize, roi_map_path, gt_dir, gen_root)
 
         self.more_transform = T.Compose([
-            T.ColorJitter(brightness=0.5, contrast=0.3, saturation=0.3, hue=0.1),
+            T.RandomApply([T.ColorJitter(brightness=0.5, contrast=0.2, saturation=0.2, hue=0.1)], p=0.8),
+            T.RandomApply([T.GaussianBlur(kernel_size=3, sigma=1)], p=0.5),
+            T.RandomAdjustSharpness(sharpness_factor=5, p=0.5),
             T.ToTensor(),
             T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
         ])
@@ -39,6 +41,9 @@ class DenClsDataset(DensityMapDataset):
         basename = img_fn.split('/')[-1].split('.')[0]
         if img_fn.startswith(self.root):
             gt_fn = img_fn.replace(img_ext, '.npy')
+            if '_aug' in basename:
+                aug_tag = basename.split('_')[-1]
+                gt_fn = gt_fn.replace('_'+aug_tag, '')
         else:
             basename = basename[:-2]
             gt_fn = os.path.join(self.root, 'train', basename + '.npy')
@@ -59,6 +64,15 @@ class DenClsDataset(DensityMapDataset):
         elif self.method in ['val', 'test']:
             return self._val_transform(img, gt, basename)
         
+    def _rotate_gt(self, gt, w, h, angle):
+        gt = np.array(gt)
+        gt = gt - [w/2, h/2]
+        theta = angle / 180.0 * np.pi
+        rot_mat = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
+        gt = np.dot(gt, rot_mat)
+        gt = gt + [w/2, h/2]
+        return gt
+
     def _train_transform(self, img, gt, dmap):
         w, h = img.size
         assert len(gt) >= 0
@@ -84,6 +98,13 @@ class DenClsDataset(DensityMapDataset):
         #         new_dmap_sum = dmap.sum()
         #         dmap = dmap * dmap_sum / new_dmap_sum
         #         gt = gt * factor
+
+        # Rotation
+        # if random.random() > 0.5:
+        #     angle = random.random() * 20 - 10
+        #     img = F.rotate(img, angle, F.InterpolationMode.BILINEAR)
+        #     dmap = F.rotate(dmap, angle, F.InterpolationMode.BILINEAR)
+            # gt = self._rotate_gt(gt, w, h, angle)
         
         # Padding
         st_size = 1.0 * min(w, h)

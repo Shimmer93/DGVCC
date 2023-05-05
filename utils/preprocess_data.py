@@ -273,15 +273,19 @@ def run_sta(origin_dir, save_dir, min_size, max_size):
             sub_phase_list = ['train', 'val']
             im_path = os.path.join(sub_dir, 'images')
             im_list = glob(os.path.join(im_path, '*jpg'))
-            shuffle(im_list)
-            train_split = int(len(im_list) * 0.8)
-            train_list = im_list[:train_split]
-            val_list = im_list[train_split:]
-            for sub_phase, im_list in zip(sub_phase_list, [train_list, val_list]):
+            # shuffle(im_list)
+            # train_split = int(len(im_list) * 0.8)
+            # train_list = im_list[:train_split]
+            # val_list = im_list[train_split:]
+            # for sub_phase, im_list in zip(sub_phase_list, [train_list, val_list]):
+            for sub_phase, im_list in zip(['val'], [im_list]):
                 sub_save_dir = os.path.join(save_dir, sub_phase)
                 if not os.path.exists(sub_save_dir):
                     os.makedirs(sub_save_dir)
                 for im_path in tqdm(im_list):
+                    basename = os.path.basename(im_path)
+                    if os.path.exists(f'/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/sta/train/{basename}'):
+                        continue
                     name = os.path.basename(im_path)
                     im, points = generate_data_sta(im_path, min_size, max_size)
                     im_save_path = os.path.join(sub_save_dir, name)
@@ -289,6 +293,7 @@ def run_sta(origin_dir, save_dir, min_size, max_size):
                     gd_save_path = im_save_path.replace('jpg', 'npy')
                     np.save(gd_save_path, points)
         else:
+            continue
             sub_save_dir = os.path.join(save_dir, 'test')
             if not os.path.exists(sub_save_dir):
                 os.makedirs(sub_save_dir)

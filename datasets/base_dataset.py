@@ -32,8 +32,8 @@ class BaseDataset(Dataset):
 
         if self.method == 'train':
             self.transform = T.Compose([
-                # T.RandomApply([T.ColorJitter(brightness=0.7, contrast=0.5, saturation=0.5, hue=0.2)], p=0.8),
-                # T.RandomApply([T.GaussianBlur(kernel_size=5, sigma=3)], p=0.2),
+                # T.RandomApply([T.ColorJitter(brightness=0.5, contrast=0.3, saturation=0.3, hue=0.1)], p=0.8),
+                # T.RandomApply([T.GaussianBlur(kernel_size=3, sigma=1)], p=0.2),
                 T.ToTensor(),
                 T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
                 # T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
@@ -52,6 +52,14 @@ class BaseDataset(Dataset):
         if self.gen_root is not None and self.method == 'train':
             self.img_fns += glob(os.path.join(self.gen_root, '*.jpg')) + \
                               glob(os.path.join(self.gen_root, '*.png'))
+        # if self.method == 'train':
+        #     self.img_fns = glob(os.path.join(root, self.method, '*.jpg')) + \
+        #                    glob(os.path.join(root, self.method, '*.png')) + \
+        #                    glob(os.path.join(root, 'val', '*.jpg')) + \
+        #                    glob(os.path.join(root, 'val', '*.png'))
+        # else:
+        #     self.img_fns = glob(os.path.join(root, 'test', '*.jpg')) + \
+        #                    glob(os.path.join(root, 'test', '*.png'))
             
         if self.method in ['val', 'test']:
             self.img_fns = sorted(self.img_fns)

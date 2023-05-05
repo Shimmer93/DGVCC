@@ -15,10 +15,12 @@ from math import sqrt
 from enum import Enum
 from PIL import Image
 from glob import glob
+from copy import deepcopy
 
 from trainers.trainer import Trainer
 from losses.bl import BL
-from utils.misc import denormalize, divide_img_into_patches, patchwise_random_rotate
+from losses.sim import sim_loss
+from utils.misc import denormalize, divide_img_into_patches, patchwise_random_rotate, seed_everything, get_current_datetime
 
 class AdvTrainer(Trainer):
     def __init__(self, seed, version, device, log_para, mode):
@@ -50,10 +52,13 @@ class AdvTrainer(Trainer):
         else:
             super().save_ckpt(model, path)
 
-    def compute_count_loss(self, loss: nn.Module, pred_dmaps, gt_datas):
+    def compute_count_loss(self, loss: nn.Module, pred_dmaps, gt_datas, weights=None):
         if loss.__class__.__name__ == 'MSELoss':
             _, gt_dmaps, _ = gt_datas
             gt_dmaps = gt_dmaps.to(self.device)
+            if weights is not None:
+                pred_dmaps = pred_dmaps * weights
+                gt_dmaps = gt_dmaps * weights
             loss_value = loss(pred_dmaps, gt_dmaps * self.log_para)
 
         elif loss.__class__.__name__ == 'BL':
@@ -70,7 +75,7 @@ class AdvTrainer(Trainer):
 
     def predict(self, model, img):
         h, w = img.shape[2:]
-        patch_size = 1440
+        patch_size = 1600
         if h >= patch_size or w >= patch_size:
             pred_count = 0
             img_patches, _, _ = divide_img_into_patches(img, patch_size)
@@ -85,24 +90,27 @@ class AdvTrainer(Trainer):
     
     def get_visualized_results(self, model, img):
         h, w = img.shape[2:]
-        patch_size = 1024
+        patch_size = 720
         if h >= patch_size or w >= patch_size:
             dmap = torch.zeros(1, 1, h, w)
+            dmap_raw = torch.zeros(1, 1, h//4, w//4)
             bmap = torch.zeros(1, 3, h//16, w//16)
             img_patches, nh, nw = divide_img_into_patches(img, patch_size)
             for i in range(nh):
                 for j in range(nw):
                     patch = img_patches[i*nw+j]
-                    pred_dmap, _, pred_bmap = model(patch)
+                    pred_dmap, (pred_dmap_raw, pred_bmap, _, _) = model(patch)
                     dmap[:, :, i*patch_size:(i+1)*patch_size, j*patch_size:(j+1)*patch_size] = pred_dmap
+                    dmap_raw[:, :, i*patch_size//4:(i+1)*patch_size//4, j*patch_size//4:(j+1)*patch_size//4] = pred_dmap_raw
                     bmap[:, :, i*patch_size//16:(i+1)*patch_size//16, j*patch_size//16:(j+1)*patch_size//16] = pred_bmap
         else:
-            dmap, _, bmap = model(img)
+            dmap, (dmap_raw, bmap, _, _) = model(img)
 
         dmap = dmap[0, 0].cpu().detach().numpy().squeeze()
+        dmap_raw = dmap_raw[0, 0].cpu().detach().numpy().squeeze()
         bmap = bmap[0, 0].cpu().detach().numpy().squeeze()
 
-        return dmap, bmap
+        return dmap, dmap_raw, bmap
     
     def train_step(self, model, loss, optimizer, batch, epoch):
         imgs1, imgs2, gt_datas = batch
@@ -112,11 +120,12 @@ class AdvTrainer(Trainer):
 
         if self.mode == 'regression':
             optimizer.zero_grad()
-            dmaps, _, bmaps = model(imgs1)
+            dmaps, (_, bmaps, feats, feats_rec) = model(imgs1, gt_bmaps)
             loss_den = self.compute_count_loss(loss, dmaps, gt_datas)
             loss_cls = F.binary_cross_entropy(bmaps, gt_bmaps)
-            print(f'loss_den: {loss_den}, loss_cls: {loss_cls}')
-            loss_total = loss_den + 10 * loss_cls
+            loss_sim = sim_loss(feats, feats_rec)
+            print(f'loss_den: {loss_den}, loss_cls: {loss_cls}, loss_sim_den: {loss_sim}')
+            loss_total = loss_den + 10 * loss_cls + loss_sim
             loss_total.backward()
             optimizer.step()
 
@@ -135,51 +144,55 @@ class AdvTrainer(Trainer):
 
             opt_gen.zero_grad()
 
-            # imgs_orig = imgs1
-            # imgs_attacked = model_gen(imgs_orig)
-            # imgs_cat = torch.cat([imgs_orig, imgs_attacked], dim=0)
-            # imgs_cat_aug = self.augment(imgs_cat)
-            # imgs_orig_aug, imgs_attacked_aug = torch.chunk(imgs_cat_aug, 2, dim=0)
-            # imgs_aug_attacked = model_gen(imgs_orig_aug)
-            # imgs_noisy = imgs_attacked_aug
-
-            # loss_attack = F.mse_loss(imgs_aug_attacked, imgs_attacked_aug)
-
-            imgs_noisy = model_gen(imgs2)
-            dmaps, dmaps_raw, bmaps = model_reg(imgs1)
-            dmaps_noisy, dmaps_raw_noisy, bmaps_noisy = model_reg(imgs_noisy)
-            # loss_dmap_raw = F.mse_loss(dmaps_raw, dmaps_raw_noisy)
-            loss_cls_map = F.mse_loss(bmaps, gt_bmaps, reduction='none').detach()
-            loss_cls_noisy = F.mse_loss(bmaps_noisy[loss_cls_map>0.01], (1-gt_bmaps)[loss_cls_map>0.01])
-            loss_rec = F.mse_loss(imgs_noisy, imgs2)
-            loss_gen = 10 * loss_cls_noisy + 1000 * loss_rec
-            print(f'loss_cls_noisy: {loss_cls_noisy:.4f}. loss_rec: {loss_rec:.4f}')
+            # model_gen_clone = deepcopy(model_gen)
+            imgs_noisy = model_gen(imgs2 + torch.randn_like(imgs2) * 0.1)
+            imgs_noisy2 = model_gen(imgs2 + torch.randn_like(imgs2) * 0.1)
+            loss_div = -F.l1_loss(imgs_noisy, imgs_noisy2)
+            resized_bmaps = F.interpolate(gt_bmaps, scale_factor=16, mode='nearest')
+            imgs_noisy = imgs_noisy * (1 - resized_bmaps) + imgs2 * resized_bmaps
+            # dmaps, (_, bmaps, feats, feats_rec) = model_reg(imgs2, gt_bmaps)
+            dmaps_noisy, (_, bmaps_noisy, feats_noisy, feats_rec_noisy) = model_reg(imgs_noisy, gt_bmaps)
+            # confused_bmaps = bmaps_noisy * (1 - gt_bmaps) + gt_bmaps * (1 - bmaps_noisy)
+            loss_cls_confuse = F.binary_cross_entropy(bmaps_noisy, 1-gt_bmaps)
+            loss_sim_confuse = -sim_loss(feats_noisy, feats_rec_noisy)
+            loss_rec = F.mse_loss(imgs_noisy[(resized_bmaps==0).repeat(1, 3, 1, 1)], imgs2[(resized_bmaps==0).repeat(1, 3, 1, 1)])
+            loss_gen = loss_cls_confuse + loss_sim_confuse + 100 * loss_rec + 10 * loss_div
+            print(f'loss_cls_confuse: {loss_cls_confuse}, loss_sim_confuse: {loss_sim_confuse}, loss_rec: {loss_rec}, loss_div: {loss_div}')
             loss_gen.backward()
             opt_gen.step()
 
+            # with torch.no_grad():
+            #     alpha = np.exp(-1000*loss_rec.detach().item())
+            #     for param, param_clone in zip(model_gen.parameters(), model_gen_clone.parameters()):
+            #         param.data = param.data * alpha + param_clone.data * (1 - alpha)
+
             opt_reg.zero_grad()
 
-            # imgs_orig = imgs1
-            # imgs_attacked = model_gen(imgs_orig)
-            # imgs_cat = torch.cat([imgs_orig, imgs_attacked], dim=0)
-            # imgs_cat_aug = self.augment(imgs_cat)
-            # imgs_orig_aug, imgs_attacked_aug = torch.chunk(imgs_cat_aug, 2, dim=0)
-            # imgs_aug_attacked = model_gen(imgs_orig_aug)
-            # imgs_noisy = imgs_attacked_aug
-
-            imgs_noisy = model_gen(imgs2)
-            dmaps, dmaps_raw, bmaps = model_reg(imgs1)
-            dmaps_noisy, dmaps_raw_noisy, bmaps_noisy = model_reg(imgs_noisy)
+            # model_reg_clone = deepcopy(model_reg)
+            imgs_noisy = model_gen(imgs2 + torch.randn_like(imgs2) * 0.1)
+            resized_bmaps = F.interpolate(gt_bmaps, scale_factor=16, mode='nearest')
+            imgs_noisy = imgs_noisy * (1 - resized_bmaps) + imgs2 * resized_bmaps
+            dmaps, (_, bmaps, feats, feats_rec) = model_reg(imgs1, gt_bmaps)
+            dmaps_noisy, (_, bmaps_noisy, feats_noisy, feats_rec_noisy) = model_reg(imgs_noisy, gt_bmaps)
             loss_dmap = self.compute_count_loss(loss, dmaps, gt_datas)
             loss_dmap_noisy = self.compute_count_loss(loss, dmaps_noisy, gt_datas)
-            loss_cls = F.mse_loss(bmaps, gt_bmaps)
-            loss_cls_noisy = F.mse_loss(bmaps_noisy, gt_bmaps)
-            loss_dmap_sim = F.mse_loss(dmaps_raw, dmaps_raw_noisy)
-            loss_cls_sim = F.mse_loss(bmaps_noisy, bmaps)
-            print(f'loss_dmap: {loss_dmap.item():.4f}, loss_dmap_noisy: {loss_dmap_noisy.item():.4f}, loss_cls: {loss_cls.item():.4f}, loss_cls_noisy: {loss_cls_noisy.item():.4f}, loss_dmap_sim: {loss_dmap_sim.item():.4f}, loss_cls_sim: {loss_cls_sim.item():.4f}')
-            loss_reg = loss_dmap + loss_dmap_noisy + loss_dmap_sim + 10 * (loss_cls + loss_cls_noisy + loss_cls_sim)
+            # loss_dmap_sim = F.mse_loss(dmaps, dmaps_noisy)
+            loss_cls = F.binary_cross_entropy(bmaps, gt_bmaps)
+            loss_cls_noisy = F.binary_cross_entropy(bmaps_noisy, gt_bmaps)
+            # loss_cls_sim = F.mse_loss(bmaps, bmaps_noisy)
+            loss_sim = sim_loss(feats, feats_rec)
+            loss_sim_noisy = sim_loss(feats_noisy, feats_rec_noisy)
+            loss_trans = sim_loss(feats_rec, feats_rec_noisy)
+            loss_trans_noisy = sim_loss(feats_rec_noisy, feats_rec)
+            print(f'loss_dmap: {loss_dmap:.4f}, loss_dmap_noisy: {loss_dmap_noisy:.4f}, loss_cls: {loss_cls:.4f}, loss_cls_noisy: {loss_cls_noisy:.4f}, loss_sim: {loss_sim:.4f}, loss_sim_noisy: {loss_sim_noisy:.4f}')
+            loss_reg = loss_dmap + loss_dmap_noisy + 10 * (loss_cls + loss_cls_noisy) + (loss_sim + loss_sim_noisy + loss_trans + loss_trans_noisy)
             loss_reg.backward()
             opt_reg.step()
+
+            # with torch.no_grad():
+            #     alpha = np.exp(-1000*loss_rec.detach().item())
+            #     for param, param_clone in zip(model_reg.parameters(), model_reg_clone.parameters()):
+            #         param.data = param.data * alpha + param_clone.data * (1 - alpha)
 
             loss_total = loss_reg + loss_gen
 
@@ -187,22 +200,38 @@ class AdvTrainer(Trainer):
             model_gen, model_reg = model
             opt_gen, opt_reg = optimizer
 
-            # imgs_noisy = patchwise_random_rotate(imgs2, gt_datas[-1].to(self.device))
-
             opt_reg.zero_grad()
-            imgs_noisy = model_gen(imgs2)
-            dmaps, dmaps_raw, bmaps = model_reg(imgs1)
-            dmaps_noisy, dmaps_raw_noisy, bmaps_noisy = model_reg(imgs_noisy)
+            # imgs_noisy = model_gen(imgs2 + torch.randn_like(imgs2) * 0.1)
+            # resized_bmaps = F.interpolate(gt_bmaps, scale_factor=16, mode='nearest')
+            # imgs_noisy = imgs_noisy * (1 - resized_bmaps) + imgs2 * resized_bmaps
+            # model_reg.mem.requires_grad_(False)
+            dmaps, (_, bmaps, feats, feats_rec) = model_reg(imgs1, gt_bmaps)
+            dmaps_noisy, (_, bmaps_noisy, feats_noisy, feats_rec_noisy) = model_reg(imgs2, gt_bmaps)
             loss_dmap = self.compute_count_loss(loss, dmaps, gt_datas)
             loss_dmap_noisy = self.compute_count_loss(loss, dmaps_noisy, gt_datas)
-            loss_cls = F.binary_cross_entropy(bmaps, gt_datas[-1].to(self.device))
-            loss_cls_noisy = F.binary_cross_entropy(bmaps_noisy, gt_datas[-1].to(self.device))
-            loss_dmap_sim = F.mse_loss(dmaps_raw, dmaps_raw_noisy)
-            loss_cls_sim = F.binary_cross_entropy(bmaps_noisy, bmaps)
-            # print(f'loss_dmap: {loss_dmap.item():.4f}, loss_dmap_noisy: {loss_dmap_noisy.item():.4f}, loss_cls: {loss_cls.item():.4f}, loss_cls_noisy: {loss_cls_noisy.item():.4f}, loss_dmap_sim: {loss_dmap_sim.item():.4f}, loss_cls_sim: {loss_cls_sim.item():.4f}')
-            loss_total = loss_dmap + loss_dmap_noisy + loss_dmap_sim + 10 * (loss_cls + loss_cls_noisy + loss_cls_sim)
+            # loss_dmap_sim = F.mse_loss(dmaps, dmaps_noisy)
+            loss_cls = F.binary_cross_entropy(bmaps, gt_bmaps)
+            loss_cls_noisy = F.binary_cross_entropy(bmaps_noisy, gt_bmaps)
+            # loss_cls_sim = F.mse_loss(bmaps, bmaps_noisy)
+            loss_sim = sim_loss(feats, feats_rec)
+            loss_trans = F.mse_loss(feats_rec, feats_rec_noisy) + F.mse_loss(feats, feats_noisy)
+            # loss_trans_noisy = F.mse_loss(feats_rec_noisy, feats_rec)
+            print(f'loss_dmap: {loss_dmap:.4f}, loss_dmap_noisy: {loss_dmap_noisy:.4f}, loss_cls: {loss_cls:.4f}, loss_cls_noisy: {loss_cls_noisy:.4f}, loss_sim: {loss_sim:.4f}, loss_trans: {loss_trans:.4f}')
+            loss_total = loss_dmap + loss_dmap_noisy + 10 * (loss_cls + loss_cls_noisy) + (loss_sim + 100 * loss_trans)
             loss_total.backward()
             opt_reg.step()
+
+            # dmaps, dmaps_raw, bmaps = model_reg(imgs1, gt_bmaps)
+            # dmaps_noisy, dmaps_raw_noisy, bmaps_noisy = model_reg(imgs2, gt_bmaps)
+            # loss_dmap_sim = F.l1_loss(dmaps.clone(), dmaps_noisy.clone(), reduction='none').detach() + 1
+            # loss_dmap = self.compute_count_loss(loss, dmaps, gt_datas, loss_dmap_sim)
+            # loss_dmap_noisy = self.compute_count_loss(loss, dmaps_noisy, gt_datas, loss_dmap_sim)
+            # loss_cls = F.mse_loss(bmaps, gt_bmaps)
+            # loss_cls_noisy = F.mse_loss(bmaps_noisy, gt_bmaps)
+            # print(f'loss_dmap: {loss_dmap.item():.4f}, loss_dmap_noisy: {loss_dmap_noisy.item():.4f}, loss_cls: {loss_cls.item():.4f}, loss_cls_noisy: {loss_cls_noisy.item():.4f}, loss_dmap_sim: {loss_dmap_sim.item():.4f}, loss_cls_sim: {loss_cls_sim.item():.4f}')
+            # loss_total = loss_dmap + loss_dmap_noisy + 10 * (loss_cls + loss_cls_noisy)
+            # loss_total.backward()
+            # opt_reg.step()
 
         return loss_total.detach().item()
 
@@ -215,7 +244,8 @@ class AdvTrainer(Trainer):
             pred_count = self.predict(model, img1)
             gt_count = gt.shape[1]
             mae = np.abs(pred_count - gt_count)
-            return mae
+            mse = (pred_count - gt_count) ** 2
+            return mae, {'mse': mse}
         
         elif self.mode == 'generation':
             img_rec = model(img1)
@@ -224,13 +254,15 @@ class AdvTrainer(Trainer):
         
         else:
             gen, reg = model
-            img_noisy = gen(img2)
+            # img_noisy = gen(img1)
             pred_count = self.predict(reg, img1)
-            noisy_count = self.predict(reg, img_noisy)
+            noisy_count = self.predict(reg, img2)
             gt_count = gt.shape[1]
-            mae = np.abs((pred_count+noisy_count)/2 - gt_count)
-            # mae = np.abs(pred_count - gt_count)
-            return mae
+            mae = np.abs(pred_count - gt_count)
+            mse = (pred_count - gt_count) ** 2
+            mae_noisy = np.abs(noisy_count - gt_count)
+            res = np.abs(pred_count - noisy_count)
+            return mae + mae_noisy + res, {'mae': mae, 'mae_noisy': mae_noisy}
         
     def test_step(self, model, batch):
         img1, img2, gt, _, _ = batch
@@ -264,19 +296,18 @@ class AdvTrainer(Trainer):
         img2 = img2.to(self.device)
 
         if self.mode == 'regression':
-            pred_dmap, pred_bmap = self.get_visualized_results(model, img1)
+            pred_dmap, pred_dmap_raw, pred_bmap = self.get_visualized_results(model, img1)
             img1 = denormalize(img1.detach())[0].cpu().permute(1, 2, 0).numpy()
+            pred_raw_count = pred_dmap_raw.sum() / self.log_para * 16
             pred_count = pred_dmap.sum() / self.log_para
             gt_count = gt.shape[1]
 
-            print(pred_bmap.max(), pred_bmap.min())
+            datas = [img1, pred_dmap_raw, pred_dmap, pred_bmap]
+            titles = [f'GT: {gt_count}', f'Pred_raw: {pred_raw_count}', f'Pred: {pred_count}', 'Cls']
 
-            datas = [img1, pred_dmap, pred_bmap]
-            titles = [f'GT: {gt_count}', f'Pred: {pred_count}', 'Cls']
-
-            fig = plt.figure(figsize=(20, 6))
-            for i in range(3):
-                ax = fig.add_subplot(1, 3, i+1)
+            fig = plt.figure(figsize=(20, 8))
+            for i in range(4):
+                ax = fig.add_subplot(1, 4, i+1)
                 ax.set_title(titles[i])
                 ax.imshow(datas[i])
 
@@ -302,25 +333,56 @@ class AdvTrainer(Trainer):
 
         else:
             gen, reg = model
-            pred_dmap, pred_bmap = self.get_visualized_results(reg, img1)
+            pred_dmap, _, pred_bmap = self.get_visualized_results(reg, img1)
             # img2 = patchwise_random_rotate(img2, torch.from_numpy(pred_bmap).unsqueeze(0).unsqueeze(0).to(self.device))
-            img_noisy = self.augment(gen(img1))
-            noisy_dmap, noisy_bmap = self.get_visualized_results(reg, img_noisy)
+            # img_noisy = self.augment(gen(img1))
+            img_noisy = gen(img1 + torch.randn_like(img1) * 0.1)
+            resized_bmap = F.interpolate(torch.from_numpy(pred_bmap).unsqueeze(0).unsqueeze(0).to(self.device), scale_factor=16, mode='nearest')
+            img_noisy = img_noisy * (1 - resized_bmap) + img1 * resized_bmap
+            res = img_noisy - img1
+            noisy_dmap, _, noisy_bmap = self.get_visualized_results(reg, img_noisy)
             img1 = denormalize(img1.detach())[0].cpu().permute(1, 2, 0).numpy()
+            img2 = denormalize(img2.detach())[0].cpu().permute(1, 2, 0).numpy()
             img_noisy = denormalize(img_noisy.detach())[0].cpu().permute(1, 2, 0).numpy()
+            res = denormalize(res.detach())[0].cpu().permute(1, 2, 0).numpy()
             pred_count = pred_dmap.sum() / self.log_para
             noisy_count = noisy_dmap.sum() / self.log_para
             gt_count = gt.shape[1]
 
-            datas = [img1, pred_dmap, pred_bmap, img_noisy, noisy_dmap, noisy_bmap]
-            titles = [f'GT: {gt_count}', f'Pred: {pred_count}', 'Cls', 'Rec', f'Noisy: {noisy_count}', 'Noisy_Cls']
+            datas = [img1, pred_dmap, pred_bmap, img_noisy, noisy_dmap, noisy_bmap, img2, res]
+            titles = [f'GT: {gt_count}', f'Pred: {pred_count}', 'Cls', 'Rec', f'Noisy: {noisy_count}', 'Noisy_Cls', 'Aug', 'Res']
 
-            fig = plt.figure(figsize=(20, 6))
-            for i in range(6):
-                ax = fig.add_subplot(2, 3, i+1)
+            fig = plt.figure(figsize=(20, 9))
+            for i in range(8):
+                ax = fig.add_subplot(3, 3, i+1)
                 ax.set_title(titles[i])
                 ax.imshow(datas[i])
 
             plt.savefig(os.path.join(vis_dir, f'{name[0]}.png'))
             plt.close()
-            
+
+    def train_and_test_epoch(self, model, loss, train_dataloader, val_dataloader, test_dataloader, \
+                             optimizer, scheduler, epoch, best_criterion, best_epoch):
+        best_criterion, best_epoch = self.train_epoch(model, loss, train_dataloader, val_dataloader, \
+                                                      optimizer, scheduler, epoch, best_criterion, best_epoch)
+        self.test(model, test_dataloader)
+        return best_criterion, best_epoch
+    
+    def train_and_test(self, model, loss, train_dataloader, val_dataloader, test_dataloader, \
+                       optimizer, scheduler, checkpoint=None, num_epochs=100):
+        self.log('Start training and testing at {}'.format(get_current_datetime()))
+        self.load_ckpt(model, checkpoint)
+
+        model = model.to(self.device) if isinstance(model, nn.Module) else [m.to(self.device) for m in model]
+        loss = loss.to(self.device)
+        
+        best_criterion = 1e10
+        best_epoch = -1
+
+        for epoch in range(num_epochs):
+            best_criterion, best_epoch = self.train_and_test_epoch(
+                model, loss, train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, epoch, best_criterion, best_epoch)
+
+        self.log('Best epoch: {}, best criterion: {}'.format(best_epoch, best_criterion))
+        self.log('Training results saved to {}'.format(self.log_dir))
+        self.log('End training and testing at {}'.format(get_current_datetime()))

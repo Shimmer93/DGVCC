@@ -15,8 +15,8 @@ from enum import Enum
 from PIL import Image
 from glob import glob
 
-from trainers.advtrainer import AdvTrainer
-from models.models import get_models
+from trainers.basetrainer import BaseTrainer
+from models.models import get_models, get_basemodel
 from losses.bl import BL
 from datasets.den_dataset import DensityMapDataset
 from datasets.den_cls_dataset import DenClsDataset
@@ -24,14 +24,9 @@ from datasets.bay_dataset import BayesianDataset
 from datasets.dual_dataset import DualDataset
 from utils.misc import divide_img_into_patches, denormalize, AverageMeter, DictAvgMeter, seed_everything, get_current_datetime
 
-def get_model(name, params, mode):
+def get_model(name, params):
     gen, reg = get_models()
-    if mode == 'generation':
-        return gen
-    elif mode == 'regression':
-        return reg
-    else:
-        return [gen, reg]
+    return reg
 
 def get_loss(name, params):
     if name == 'bl':
@@ -94,15 +89,9 @@ def load_config(config_path, task):
     init_params['version'] = cfg['version']
     init_params['device'] = cfg['device']
     init_params['log_para'] = cfg['log_para']
-    init_params['mode'] = cfg['mode']
 
-    gen, reg = get_models()
-    if cfg['mode'] == 'generation':
-        task_params['model'] = gen
-    elif cfg['mode'] == 'regression':
-        task_params['model'] = reg
-    else:
-        task_params['model'] = [gen, reg]
+    reg = get_basemodel()
+    task_params['model'] = reg
 
     task_params['checkpoint'] = cfg['checkpoint']
     
@@ -112,18 +101,8 @@ def load_config(config_path, task):
         task_params['train_dataloader'] = DataLoader(train_dataset, collate_fn=collate, **cfg['train_loader'])
         val_dataset, _ = get_dataset(cfg['val_dataset']['name'], cfg['val_dataset']['params'], method='val')
         task_params['val_dataloader'] = DataLoader(val_dataset, **cfg['val_loader'])
-        if cfg['mode'] == 'generation' or cfg['mode'] == 'regression':
-            task_params['optimizer'] = get_optimizer(cfg['optimizer']['name'], cfg['optimizer']['params'], task_params['model'])
-            task_params['scheduler'] = get_scheduler(cfg['scheduler']['name'], cfg['scheduler']['params'], task_params['optimizer'])
-        else:
-            task_params['optimizer'] = [
-                get_optimizer(cfg['optimizer']['name'], cfg['optimizer']['params'], task_params['model'][0]),
-                get_optimizer(cfg['optimizer']['name'], cfg['optimizer']['params'], task_params['model'][1])
-            ]
-            task_params['scheduler'] = [
-                get_scheduler(cfg['scheduler']['name'], cfg['scheduler']['params'], task_params['optimizer'][0]),
-                get_scheduler(cfg['scheduler']['name'], cfg['scheduler']['params'], task_params['optimizer'][1])
-            ]
+        task_params['optimizer'] = get_optimizer(cfg['optimizer']['name'], cfg['optimizer']['params'], task_params['model'])
+        task_params['scheduler'] = get_scheduler(cfg['scheduler']['name'], cfg['scheduler']['params'], task_params['optimizer'])
         task_params['num_epochs'] = cfg['num_epochs']
 
     if task != 'train':
@@ -140,7 +119,7 @@ if __name__ == '__main__':
 
     init_params, task_params = load_config(args.config, args.task)
 
-    trainer = AdvTrainer(**init_params)
+    trainer = BaseTrainer(**init_params)
     os.system(f'cp {args.config} {trainer.log_dir}')
 
     if args.task == 'train':
