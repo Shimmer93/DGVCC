@@ -1,12 +1,12 @@
 seed: 2112
-version: sta_final22
-device: 'cuda:0'
+version: sta_final_scratch4
+device: 'cuda:1'
 log_para: 1000
 mode: 'final'
-num_epochs: &num_epochs 100
+num_epochs: &num_epochs 200
 checkpoint:
   - null
-  - /mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_final22/best_98_166.5430_reg.pth
+  - /mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_final_scratch4/best_184_88.9609_reg.pth
 model:
   name: 'dgnet'
   params:
@@ -24,7 +24,7 @@ val_dataset: *train_dataset_params
 test_dataset:
   name: 'den_cls'
   params: 
-    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/qnrf'
+    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/nwpu'
     crop_size: 320
     downsample: 1
     is_grey: False
@@ -56,3 +56,4 @@ scheduler:
     max_lr: *lr
     epochs: *num_epochs
     steps_per_epoch: 30
+    final_div_factor: 1000

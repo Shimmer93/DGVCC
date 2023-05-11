@@ -88,7 +88,7 @@ class BaseTrainer(Trainer):
         gt_bmaps = gt_datas[-1].to(self.device)
 
         optimizer.zero_grad()
-        dmaps, (_, bmaps) = model(imgs1)
+        dmaps, (_, bmaps) = model(imgs2)
         loss_den = self.compute_count_loss(loss, dmaps, gt_datas)
         loss_cls = F.binary_cross_entropy(bmaps, gt_bmaps)
         loss_total = loss_den + loss_cls

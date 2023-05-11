@@ -1,18 +1,20 @@
 seed: 2112
-version: sta_gen
-device: 'cuda:2'
-mode: generation
+version: mall_final_scratch
+device: 'cuda:0'
 log_para: 1000
-num_epochs: &num_epochs 300
-checkpoint: '/mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_gen/best_45_0.0668.pth'
+mode: 'final'
+num_epochs: &num_epochs 200
+checkpoint:
+  - null
+  - null
 model:
   name: 'dgnet'
   params:
     pretrained: True
 train_dataset: &train_dataset_params
-  name: 'dual'
+  name: 'den_cls'
   params: 
-    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/sta'
+    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/mall'
     crop_size: 320
     downsample: 1
     is_grey: False
@@ -20,7 +22,7 @@ train_dataset: &train_dataset_params
     pre_resize: 1
 val_dataset: *train_dataset_params
 test_dataset:
-  name: 'dual'
+  name: 'den_cls'
   params: 
     root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/stb'
     crop_size: 320
@@ -29,7 +31,7 @@ test_dataset:
     unit_size: 16
     pre_resize: 1
 train_loader:
-  batch_size: 32
+  batch_size: 8
   num_workers: 16
   shuffle: True
   pin_memory: True
@@ -37,7 +39,7 @@ val_loader: &val_loader_params
   batch_size: 1
   num_workers: 4
   shuffle: False
-  pin_memory: True
+  pin_memory: False
 test_loader: *val_loader_params
 loss:
   name: 'mse'
@@ -46,10 +48,12 @@ loss:
 optimizer:
   name: 'adamw'
   params:
-    lr: 0.0001
+    lr: &lr 0.001
     weight_decay: 0.0001
 scheduler:
-  name: 'step'
+  name: 'onecycle'
   params:
-    step_size: 1
-    gamma: 0.995
+    max_lr: *lr
+    epochs: *num_epochs
+    steps_per_epoch: 30
+    final_div_factor: 1000

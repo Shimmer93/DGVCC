@@ -1,9 +1,9 @@
 seed: 2112
-version: sta_reg_base_cls
+version: sta_reg_base_cls_aug
 device: 'cuda:1'
 log_para: 1000
 num_epochs: &num_epochs 100
-checkpoint: /mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_reg_base_cls/best_84_93.9257.pth
+checkpoint: /mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/stb_reg_base_cls_aug/best_78_9.7179.pth
 model:
   name: 'dgnet'
   params:

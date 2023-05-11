@@ -1,10 +1,10 @@
 seed: 2112
-version: stb_reg_mem3
+version: stb_reg_mem
 device: 'cuda:0'
 log_para: 1000
 mode: 'regression'
 num_epochs: &num_epochs 100
-checkpoint: /mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/stb_reg_mem3/best_84_10.9195.pth
+checkpoint: /mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/stb_reg_mem/best_84_11.4355.pth
 model:
   name: 'dgnet'
   params:

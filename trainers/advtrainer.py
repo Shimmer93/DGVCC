@@ -216,8 +216,8 @@ class AdvTrainer(Trainer):
             loss_sim = sim_loss(feats, feats_rec)
             loss_trans = F.mse_loss(feats_rec, feats_rec_noisy) + F.mse_loss(feats, feats_noisy)
             # loss_trans_noisy = F.mse_loss(feats_rec_noisy, feats_rec)
-            print(f'loss_dmap: {loss_dmap:.4f}, loss_dmap_noisy: {loss_dmap_noisy:.4f}, loss_cls: {loss_cls:.4f}, loss_cls_noisy: {loss_cls_noisy:.4f}, loss_sim: {loss_sim:.4f}, loss_trans: {loss_trans:.4f}')
-            loss_total = loss_dmap + loss_dmap_noisy + 10 * (loss_cls + loss_cls_noisy) + (loss_sim + 100 * loss_trans)
+            # print(f'loss_dmap: {loss_dmap:.4f}, loss_dmap_noisy: {loss_dmap_noisy:.4f}, loss_cls: {loss_cls:.4f}, loss_cls_noisy: {loss_cls_noisy:.4f}, loss_sim: {loss_sim:.4f}, loss_trans: {loss_trans:.4f}')
+            loss_total = loss_dmap + loss_dmap_noisy + 10 * (loss_cls + loss_cls_noisy) + (loss_sim + 10 * loss_trans)
             loss_total.backward()
             opt_reg.step()
 
@@ -256,14 +256,15 @@ class AdvTrainer(Trainer):
             gen, reg = model
             # img_noisy = gen(img1)
             pred_count = self.predict(reg, img1)
-            noisy_count = self.predict(reg, img2)
+            # noisy_count = self.predict(reg, img2)
             gt_count = gt.shape[1]
             mae = np.abs(pred_count - gt_count)
             mse = (pred_count - gt_count) ** 2
-            mae_noisy = np.abs(noisy_count - gt_count)
-            res = np.abs(pred_count - noisy_count)
-            return mae + mae_noisy + res, {'mae': mae, 'mae_noisy': mae_noisy}
-        
+            # mae_noisy = np.abs(noisy_count - gt_count)
+            # res = np.abs(pred_count - noisy_count)
+            # return mae + mae_noisy + res, {'mae': mae, 'mae_noisy': mae_noisy}
+            return mae, {'mse': mse}
+
     def test_step(self, model, batch):
         img1, img2, gt, _, _ = batch
         img1 = img1.to(self.device)
@@ -336,25 +337,25 @@ class AdvTrainer(Trainer):
             pred_dmap, _, pred_bmap = self.get_visualized_results(reg, img1)
             # img2 = patchwise_random_rotate(img2, torch.from_numpy(pred_bmap).unsqueeze(0).unsqueeze(0).to(self.device))
             # img_noisy = self.augment(gen(img1))
-            img_noisy = gen(img1 + torch.randn_like(img1) * 0.1)
-            resized_bmap = F.interpolate(torch.from_numpy(pred_bmap).unsqueeze(0).unsqueeze(0).to(self.device), scale_factor=16, mode='nearest')
-            img_noisy = img_noisy * (1 - resized_bmap) + img1 * resized_bmap
-            res = img_noisy - img1
-            noisy_dmap, _, noisy_bmap = self.get_visualized_results(reg, img_noisy)
+            # img_noisy = gen(img1 + torch.randn_like(img1) * 0.1)
+            # resized_bmap = F.interpolate(torch.from_numpy(pred_bmap).unsqueeze(0).unsqueeze(0).to(self.device), scale_factor=16, mode='nearest')
+            # img_noisy = img_noisy * (1 - resized_bmap) + img1 * resized_bmap
+            # res = img_noisy - img1
+            noisy_dmap, _, noisy_bmap = self.get_visualized_results(reg, img2)
             img1 = denormalize(img1.detach())[0].cpu().permute(1, 2, 0).numpy()
             img2 = denormalize(img2.detach())[0].cpu().permute(1, 2, 0).numpy()
-            img_noisy = denormalize(img_noisy.detach())[0].cpu().permute(1, 2, 0).numpy()
-            res = denormalize(res.detach())[0].cpu().permute(1, 2, 0).numpy()
+            # img_noisy = denormalize(img_noisy.detach())[0].cpu().permute(1, 2, 0).numpy()
+            # res = denormalize(res.detach())[0].cpu().permute(1, 2, 0).numpy()
             pred_count = pred_dmap.sum() / self.log_para
             noisy_count = noisy_dmap.sum() / self.log_para
             gt_count = gt.shape[1]
 
-            datas = [img1, pred_dmap, pred_bmap, img_noisy, noisy_dmap, noisy_bmap, img2, res]
-            titles = [f'GT: {gt_count}', f'Pred: {pred_count}', 'Cls', 'Rec', f'Noisy: {noisy_count}', 'Noisy_Cls', 'Aug', 'Res']
+            datas = [img1, pred_dmap, pred_bmap, img2, noisy_dmap, noisy_bmap]
+            titles = [f'GT: {gt_count}', f'Pred: {pred_count}', 'Cls', 'Rec', f'Noisy: {noisy_count}', 'Noisy_Cls']
 
-            fig = plt.figure(figsize=(20, 9))
-            for i in range(8):
-                ax = fig.add_subplot(3, 3, i+1)
+            fig = plt.figure(figsize=(15, 6))
+            for i in range(6):
+                ax = fig.add_subplot(2, 3, i+1)
                 ax.set_title(titles[i])
                 ax.imshow(datas[i])
 

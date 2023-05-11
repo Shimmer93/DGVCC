@@ -1,12 +1,12 @@
 seed: 2112
-version: stb_final6
-device: 'cuda:2'
+version: stb_final_scratch5
+device: 'cuda:3'
 log_para: 1000
 mode: 'final'
 num_epochs: &num_epochs 100
 checkpoint:
   - null
-  - /mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/stb_reg_mem/best_84_11.4355.pth
+  - /mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/stb_final_scratch5/best_98_13.3182_reg.pth
 model:
   name: 'dgnet'
   params:
@@ -15,7 +15,7 @@ train_dataset: &train_dataset_params
   name: 'den_cls'
   params: 
     root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/stb'
-    crop_size: 512
+    crop_size: 320
     downsample: 1
     is_grey: False
     unit_size: 16
@@ -24,14 +24,14 @@ val_dataset: *train_dataset_params
 test_dataset:
   name: 'den_cls'
   params: 
-    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/sta'
+    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/qnrf'
     crop_size: 512
     downsample: 1
     is_grey: False
     unit_size: 16
     pre_resize: 1
 train_loader:
-  batch_size: 4
+  batch_size: 8
   num_workers: 16
   shuffle: True
   pin_memory: True
@@ -54,5 +54,6 @@ scheduler:
   name: 'onecycle'
   params:
     max_lr: *lr
-    epochs: *num_epochs
-    steps_per_epoch: 80
+    epochs: 200
+    steps_per_epoch: 40
+    final_div_factor: 1000

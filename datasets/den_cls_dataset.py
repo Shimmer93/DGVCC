@@ -41,9 +41,10 @@ class DenClsDataset(DensityMapDataset):
         basename = img_fn.split('/')[-1].split('.')[0]
         if img_fn.startswith(self.root):
             gt_fn = img_fn.replace(img_ext, '.npy')
-            if '_aug' in basename:
-                aug_tag = basename.split('_')[-1]
-                gt_fn = gt_fn.replace('_'+aug_tag, '')
+            if basename.endswith('_aug'):
+                gt_fn = gt_fn.replace('_aug', '')
+            elif basename.endswith('_aug2'):
+                gt_fn = gt_fn.replace('_aug2', '')
         else:
             basename = basename[:-2]
             gt_fn = os.path.join(self.root, 'train', basename + '.npy')
@@ -51,7 +52,7 @@ class DenClsDataset(DensityMapDataset):
 
         if self.method == 'train':
             if self.gt_dir is None:
-                dmap_fn = gt_fn.replace(basename, basename + '_dmap2')
+                dmap_fn = gt_fn.replace(basename, basename + '_dmap')
             else:
                 dmap_fn = os.path.join(self.gt_dir, basename + '.npy')
             dmap = self._load_dmap(dmap_fn)
