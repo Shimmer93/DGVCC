@@ -17,16 +17,38 @@ from glob import glob
 
 from trainers.basetrainer import BaseTrainer
 from models.models import get_models, get_basemodel
+from models.baselines.CCTrans import alt_gvt_base
+from models.baselines.CSRNet import CSRNet
+from models.baselines.DSSINet import CRFVGG
+from models.baselines.MCNN import MCNN
+from models.baselines.SASNet import SASNet
+from models.baselines.BL import BL_VGG
 from losses.bl import BL
 from datasets.den_dataset import DensityMapDataset
 from datasets.den_cls_dataset import DenClsDataset
 from datasets.bay_dataset import BayesianDataset
-from datasets.dual_dataset import DualDataset
+from datasets.jhu_domain_dataset import JHUDomainDataset
+from datasets.jhu_domain_bay_dataset import JHUDomainBayesianDataset
+# from datasets.dual_dataset import DualDataset
 from utils.misc import divide_img_into_patches, denormalize, AverageMeter, DictAvgMeter, seed_everything, get_current_datetime
 
 def get_model(name, params):
-    gen, reg = get_models()
-    return reg
+    if name == 'dgnet':
+        return get_basemodel()
+    elif name == 'csrnet':
+        return CSRNet(**params)
+    elif name == 'mcnn':
+        return MCNN(**params)
+    elif name == 'sasnet':
+        return SASNet(**params)
+    elif name == 'dssinet':
+        return CRFVGG(**params)
+    elif name == 'cctrans':
+        return alt_gvt_base(**params)
+    elif name == 'bl':
+        return BL_VGG(**params)
+    else:
+        raise ValueError('Unknown model: {}'.format(name))
 
 def get_loss(name, params):
     if name == 'bl':
@@ -47,9 +69,12 @@ def get_dataset(name, params, method):
     elif name == 'bay':
         dataset = BayesianDataset(method=method, **params)
         collate = BayesianDataset.collate
-    elif name == 'dual':
-        dataset = DualDataset(method=method, **params)
-        collate = DualDataset.collate
+    elif name == 'jhu_domain':
+        dataset = JHUDomainDataset(method=method, **params)
+        collate = JHUDomainDataset.collate
+    elif name == 'jhu_domain_bay':
+        dataset = JHUDomainBayesianDataset(method=method, **params)
+        collate = JHUDomainBayesianDataset.collate
     else:
         raise ValueError('Unknown dataset: {}'.format(name))
     return dataset, collate
@@ -90,7 +115,7 @@ def load_config(config_path, task):
     init_params['device'] = cfg['device']
     init_params['log_para'] = cfg['log_para']
 
-    reg = get_basemodel()
+    reg = get_model(cfg['model']['name'], cfg['model']['params'])
     task_params['model'] = reg
 
     task_params['checkpoint'] = cfg['checkpoint']

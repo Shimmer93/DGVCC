@@ -21,17 +21,16 @@ from losses.bl import BL
 from datasets.den_dataset import DensityMapDataset
 from datasets.den_cls_dataset import DenClsDataset
 from datasets.bay_dataset import BayesianDataset
-from datasets.dual_dataset import DualDataset
+from datasets.jhu_domain_dataset import JHUDomainDataset
+from datasets.jhu_domain_cls_dataset import JHUDomainClsDataset
 from utils.misc import divide_img_into_patches, denormalize, AverageMeter, DictAvgMeter, seed_everything, get_current_datetime
 
 def get_model(name, params, mode):
     gen, reg = get_models()
     if mode == 'generation':
         return gen
-    elif mode == 'regression':
-        return reg
     else:
-        return [gen, reg]
+        return reg
 
 def get_loss(name, params):
     if name == 'bl':
@@ -52,9 +51,12 @@ def get_dataset(name, params, method):
     elif name == 'bay':
         dataset = BayesianDataset(method=method, **params)
         collate = BayesianDataset.collate
-    elif name == 'dual':
-        dataset = DualDataset(method=method, **params)
-        collate = DualDataset.collate
+    elif name == 'jhu_domain':
+        dataset = JHUDomainDataset(method=method, **params)
+        collate = JHUDomainDataset.collate
+    elif name == 'jhu_domain_cls':
+        dataset = JHUDomainClsDataset(method=method, **params)
+        collate = JHUDomainClsDataset.collate
     else:
         raise ValueError('Unknown dataset: {}'.format(name))
     return dataset, collate
@@ -99,10 +101,8 @@ def load_config(config_path, task):
     gen, reg = get_models()
     if cfg['mode'] == 'generation':
         task_params['model'] = gen
-    elif cfg['mode'] == 'regression':
-        task_params['model'] = reg
     else:
-        task_params['model'] = [gen, reg]
+        task_params['model'] = reg
 
     task_params['checkpoint'] = cfg['checkpoint']
     
@@ -112,18 +112,8 @@ def load_config(config_path, task):
         task_params['train_dataloader'] = DataLoader(train_dataset, collate_fn=collate, **cfg['train_loader'])
         val_dataset, _ = get_dataset(cfg['val_dataset']['name'], cfg['val_dataset']['params'], method='val')
         task_params['val_dataloader'] = DataLoader(val_dataset, **cfg['val_loader'])
-        if cfg['mode'] == 'generation' or cfg['mode'] == 'regression':
-            task_params['optimizer'] = get_optimizer(cfg['optimizer']['name'], cfg['optimizer']['params'], task_params['model'])
-            task_params['scheduler'] = get_scheduler(cfg['scheduler']['name'], cfg['scheduler']['params'], task_params['optimizer'])
-        else:
-            task_params['optimizer'] = [
-                get_optimizer(cfg['optimizer']['name'], cfg['optimizer']['params'], task_params['model'][0]),
-                get_optimizer(cfg['optimizer']['name'], cfg['optimizer']['params'], task_params['model'][1])
-            ]
-            task_params['scheduler'] = [
-                get_scheduler(cfg['scheduler']['name'], cfg['scheduler']['params'], task_params['optimizer'][0]),
-                get_scheduler(cfg['scheduler']['name'], cfg['scheduler']['params'], task_params['optimizer'][1])
-            ]
+        task_params['optimizer'] = get_optimizer(cfg['optimizer']['name'], cfg['optimizer']['params'], task_params['model'])
+        task_params['scheduler'] = get_scheduler(cfg['scheduler']['name'], cfg['scheduler']['params'], task_params['optimizer'])
         task_params['num_epochs'] = cfg['num_epochs']
 
     if task != 'train':

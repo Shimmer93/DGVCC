@@ -1,6 +1,6 @@
-seed: 1293
-version: stb_final_jsd_noerr_theta0.2
-device: 'cuda:2'
+seed: 2112
+version: mall_base
+device: 'cuda:3'
 log_para: 1000
 mode: 'final'
 num_epochs: &num_epochs 80
@@ -12,7 +12,7 @@ model:
 train_dataset: &train_dataset_params
   name: 'den_cls'
   params: 
-    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/stb'
+    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/mall'
     crop_size: 320
     downsample: 1
     is_grey: False
@@ -22,7 +22,7 @@ val_dataset: *train_dataset_params
 test_dataset:
   name: 'den_cls'
   params: 
-    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/sta'
+    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/stb'
     crop_size: 320
     downsample: 1
     is_grey: False
@@ -53,5 +53,6 @@ scheduler:
   params:
     max_lr: *lr
     epochs: *num_epochs
-    steps_per_epoch: 20
-    final_div_factor: 1000
+    steps_per_epoch: 30
+    final_div_factor: 100
+    div_factor: 10

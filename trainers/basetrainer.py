@@ -29,7 +29,7 @@ class BaseTrainer(Trainer):
 
     def compute_count_loss(self, loss: nn.Module, pred_dmaps, gt_datas, weights=None):
         if loss.__class__.__name__ == 'MSELoss':
-            _, gt_dmaps, _ = gt_datas
+            _, gt_dmaps = gt_datas
             gt_dmaps = gt_dmaps.to(self.device)
             if weights is not None:
                 pred_dmaps = pred_dmaps * weights
@@ -50,22 +50,24 @@ class BaseTrainer(Trainer):
 
     def predict(self, model, img):
         h, w = img.shape[2:]
-        patch_size = 720
+        patch_size = 800
         if h >= patch_size or w >= patch_size:
             pred_count = 0
             img_patches, _, _ = divide_img_into_patches(img, patch_size)
             for patch in img_patches:
-                pred = model(patch)[0]
+                # pred = model(patch)[0]
+                pred = model(patch)
                 pred_count += torch.sum(pred).cpu().item() / self.log_para
         else:
-            pred_dmap = model(img)[0]
+            # pred_dmap = model(img)[0]
+            pred_dmap = model(img)
             pred_count = pred_dmap.sum().cpu().item() / self.log_para
 
         return pred_count
     
     def get_visualized_results(self, model, img):
         h, w = img.shape[2:]
-        patch_size = 720
+        patch_size = 1024
         if h >= patch_size or w >= patch_size:
             dmap = torch.zeros(1, 1, h, w)
             img_patches, nh, nw = divide_img_into_patches(img, patch_size)
@@ -82,55 +84,57 @@ class BaseTrainer(Trainer):
         return dmap
     
     def train_step(self, model, loss, optimizer, batch, epoch):
-        imgs1, imgs2, gt_datas = batch
-        imgs1 = imgs1.to(self.device)
-        imgs2 = imgs2.to(self.device)
+        imgs, gt_datas = batch
+        imgs = imgs.to(self.device)
         gt_bmaps = gt_datas[-1].to(self.device)
 
         optimizer.zero_grad()
-        dmaps, (_, bmaps) = model(imgs2)
+        # dmaps, (_, bmaps) = model(imgs2)
+        dmaps = model(imgs)
+        # print(model.__class__.__name__)
+        # print(dmaps.shape, gt_datas[1].shape)
+        # print(len(dmaps), dmaps[0].shape)
         loss_den = self.compute_count_loss(loss, dmaps, gt_datas)
-        loss_cls = F.binary_cross_entropy(bmaps, gt_bmaps)
-        loss_total = loss_den + loss_cls
-        loss_total.backward()
+        # loss_cls = F.binary_cross_entropy(bmaps, gt_bmaps)
+        # loss_total = loss_den + loss_cls
+        # loss_total.backward()
+        loss_total = loss_den
         optimizer.step()
 
         return loss_total.detach().item()
 
     def val_step(self, model, batch):
-        img1, img2, gt, _, _ = batch
-        img1 = img1.to(self.device)
-        img2 = img2.to(self.device)
+        img, gt, _, _ = batch
+        img = img.to(self.device)
+        # print(img.shape)
 
-        pred_count = self.predict(model, img1)
+        pred_count = self.predict(model, img)
         gt_count = gt.shape[1]
         mae = np.abs(pred_count - gt_count)
         mse = (pred_count - gt_count) ** 2
         return mae, {'mse': mse}
         
     def test_step(self, model, batch):
-        img1, img2, gt, _, _ = batch
-        img1 = img1.to(self.device)
-        img2 = img2.to(self.device)
+        img, gt, _, _ = batch
+        img = img.to(self.device)
 
-        pred_count = self.predict(model, img1)
+        pred_count = self.predict(model, img)
         gt_count = gt.shape[1]
         mae = np.abs(pred_count - gt_count)
         mse = (pred_count - gt_count) ** 2
         return {'mae': mae, 'mse': mse}
         
     def vis_step(self, model, batch):
-        img1, img2, gt, name, _ = batch
+        img, gt, name, _ = batch
         vis_dir = os.path.join(self.log_dir, 'vis')
-        img1 = img1.to(self.device)
-        img2 = img2.to(self.device)
+        img = img.to(self.device)
 
-        pred_dmap = self.get_visualized_results(model, img1)
-        img1 = denormalize(img1.detach())[0].cpu().permute(1, 2, 0).numpy()
+        pred_dmap = self.get_visualized_results(model, img)
+        img = denormalize(img.detach())[0].cpu().permute(1, 2, 0).numpy()
         pred_count = pred_dmap.sum() / self.log_para
         gt_count = gt.shape[1]
 
-        datas = [img1, pred_dmap]
+        datas = [img, pred_dmap]
         titles = [f'GT: {gt_count}', f'Pred: {pred_count}']
 
         fig = plt.figure(figsize=(15, 4))

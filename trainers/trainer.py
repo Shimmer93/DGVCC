@@ -93,7 +93,7 @@ class Trainer(object):
         additional_meter = DictAvgMeter()
         for batch in easy_track(val_dataloader, description=f'Epoch {epoch}: Validating...'):
             criterion, additional = self.val_step(model, batch)
-            criterion_meter.update(criterion)
+            criterion_meter.update(criterion, additional['n']) if 'n' in additional else criterion_meter.update(criterion)
             additional_meter.update(additional)
         current_criterion = criterion_meter.avg
         self.log(f'Epoch {epoch}: Val criterion: {current_criterion:.4f}', end=' ')

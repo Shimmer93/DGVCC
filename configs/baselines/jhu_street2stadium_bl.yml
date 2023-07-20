@@ -1,0 +1,69 @@
+seed: 1293
+version: jhu_street2stadium_bl
+device: &device 'cuda:0'
+log_para: 100
+mode: 'final'
+num_epochs: &num_epochs 80
+checkpoint: null
+model:
+  name: 'bl'
+  params:
+    pretrained: True
+train_dataset: &train_dataset_params
+  name: 'jhu_domain_bay'
+  params: 
+    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/jhu'
+    raw_root: '/mnt/home/zpengac/USERDIR/Crowd_counting/raw_data/jhu_crowd_v2.0'
+    domain_type: 'scene'
+    domain: 'street'
+    crop_size: &csize 320
+    downsample: &ds 8
+    is_grey: False
+    unit_size: 16
+    pre_resize: 1
+val_dataset: *train_dataset_params
+test_dataset:
+  name: 'jhu_domain_bay'
+  params: 
+    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/jhu'
+    raw_root: '/mnt/home/zpengac/USERDIR/Crowd_counting/raw_data/jhu_crowd_v2.0'
+    domain_type: 'scene'
+    domain: 'stadium'
+    crop_size: *csize
+    downsample: *ds
+    is_grey: False
+    unit_size: 16
+    pre_resize: 1
+train_loader:
+  batch_size: 16
+  num_workers: 16
+  shuffle: True
+  pin_memory: True
+val_loader: &val_loader_params
+  batch_size: 1
+  num_workers: 4
+  shuffle: False
+  pin_memory: False
+test_loader: *val_loader_params
+loss:
+  name: 'bl'
+  params:
+    device: *device
+    sigma: 8.0
+    c_size: *csize
+    stride: *ds
+    background_ratio: 0.15
+    use_background: True
+optimizer:
+  name: 'adamw'
+  params:
+    lr: &lr 0.001
+    weight_decay: 0.0001
+scheduler:
+  name: 'onecycle'
+  params:
+    max_lr: *lr
+    epochs: *num_epochs
+    steps_per_epoch: 30
+    final_div_factor: 100
+    div_factor: 10

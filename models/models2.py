@@ -189,6 +189,12 @@ class DensityRegressor(nn.Module):
 class DensityRegressorM(nn.Module):
     def __init__(self, pretrained=True):
         super().__init__()
+
+        self.thrs = 0.5
+        self.part_num = 1024
+        self.final_dim = 256
+        variance = 1.0
+
         vgg = models.vgg16_bn(weights=models.VGG16_BN_Weights.DEFAULT if pretrained else None)
         self.stage1 = nn.Sequential(*list(vgg.features.children())[:23])
         self.stage2 = nn.Sequential(*list(vgg.features.children())[23:33])
@@ -210,7 +216,7 @@ class DensityRegressorM(nn.Module):
         )
 
         self.den_dec = nn.Sequential(
-            ConvBlock(512+256+128, 256, kernel_size=1, padding=0)
+            ConvBlock(512+256+128, self.final_dim, kernel_size=1, padding=0, bn=True)
         )
 
         # self.cls_dec = nn.Sequential(
@@ -218,15 +224,15 @@ class DensityRegressorM(nn.Module):
         #     nn.Dropout2d(p=0.5)
         # )
 
-        self.part_num = 1024
-        variance = 1.0
-        self.mem = nn.Parameter(torch.FloatTensor(1, 256, self.part_num).normal_(0.0, variance))
+        self.mem = nn.Parameter(torch.FloatTensor(1, self.final_dim, self.part_num).normal_(0.0, variance))
         # self.cls_mem = nn.Parameter(torch.FloatTensor(1, 256, self.part_num).normal_(0.0, variance))
+        # self.mu_mem = nn.Parameter(torch.FloatTensor(1, 256, 64).normal_(0.0, variance))
+        # self.sigma_mem = nn.Parameter(torch.FloatTensor(1, 256, 64).normal_(0.0, variance))
 
-        self.den_head = ConvBlock(256, 1, kernel_size=1, padding=0)
+        self.den_head = ConvBlock(self.final_dim, 1, kernel_size=1, padding=0)
 
         self.cls_head = nn.Sequential(
-            ConvBlock(512, 256),
+            ConvBlock(512, 256, bn=True),
             nn.Dropout2d(p=0.5),
             ConvBlock(256, 1, kernel_size=1, padding=0, relu=False),
             nn.Sigmoid()
@@ -251,12 +257,12 @@ class DensityRegressorM(nn.Module):
         y_new_ = y_new.view(b, k, h, w)
 
         # calculate rec loss
-        recon_sim = torch.bmm(y_new.transpose(1, 2), y_)
-        sim_gt = torch.linspace(0, y.shape[2] * y.shape[3] - 1,
-                                y.shape[2] * y.shape[3]).unsqueeze(0).repeat(y.shape[0], 1).to(y.device)
-        sim_loss = F.cross_entropy(recon_sim, sim_gt.long())
+        # recon_sim = torch.bmm(y_new.transpose(1, 2), y_)
+        # sim_gt = torch.linspace(0, y.shape[2] * y.shape[3] - 1,
+        #                         y.shape[2] * y.shape[3]).unsqueeze(0).repeat(y.shape[0], 1).to(y.device)
+        # sim_loss = F.cross_entropy(recon_sim, sim_gt.long())
 
-        return y_new_, sim_loss
+        return y_new_, logits
 
     def forward_fe(self, x):
         x1 = self.stage1(x)
@@ -302,8 +308,8 @@ class DensityRegressorM(nn.Module):
             new_c = c_gt
         else:
             new_c = c.clone().detach()
-            new_c[c<0.5] = 0
-            new_c[c>=0.5] = 1
+            new_c[c<self.thrs] = 0
+            new_c[c>=self.thrs] = 1
         resized_c = upsample(new_c, scale_factor=4, mode='nearest')
         d = self.den_head(y_den_new)
         dc = d * resized_c
@@ -311,62 +317,37 @@ class DensityRegressorM(nn.Module):
 
         # return dc, (d, c, y_den_new, y_cls_new, loss_den_sim, loss_cls_sim)
         return dc, (d, c, y_den, y_den_new, x3)
-    
-    def ranking(self, x):
-        # x: (b, c, h, w)
-        # return: (b, c, h, w)
-        # example: [2, 4, 1, 5] -> [1, 2, 0, 3]
-
-        # b, c, h, w = x.shape
-        # x_ = rearrange(x, 'b c h w -> (b h w) c 1')
-        # x_ = x_ - x_.transpose(1, 2)
-        # x_ = -torch.sign(x_)
-        # x_ = (x_.sum(dim=1) + c) // 2
-        # x_ = x_.view(b, c, h, w)
-
-        # return x_
-
-        b, c, h, w = x.shape
-        x_ = rearrange(x, 'b c h w -> (b h w) c')
-        sorted_idxs = torch.argsort(x_, dim=1, descending=False)
-        orig_idxs = torch.arange(c).unsqueeze(0).repeat(b * h * w, 1).long().to(x.device)
-        rank = torch.zeros_like(x_).long()
-        for i in range(b * h * w):
-            rank[i, sorted_idxs[i]] = orig_idxs[i]
-
-        rank = rearrange(rank, '(b h w) c -> b c h w', b=b, h=h, w=w)
-
-        return rank
 
     def forward_pair(self, img1, img2, c_gt=None):
-        # e = |img1 - img2|
-        # sort e in ascending order
-        # return img1[index of upper 50% e], img2[index of upper 50% e]
         y_cat1, x3_1 = self.forward_fe(img1)
         y_cat2, x3_2 = self.forward_fe(img2)
         y_den1 = self.den_dec(y_cat1)
         y_den2 = self.den_dec(y_cat2)
-        e_y = torch.abs(y_den1 - y_den2)
-        # e_mask = torch.exp(-e_y)
+        y_in1 = F.instance_norm(y_den1, eps=1e-5)
+        y_in2 = F.instance_norm(y_den2, eps=1e-5)
+        e_y = torch.abs(y_in1 - y_in2)
 
-        # print(e_y.max().item(), e_y.min().item(), e_y.median().item())
-        # e_order_idx = self.ranking(e_y)
-        e_mask = e_y < 0.5
-        # e_mask = (e_order_idx < int(e_order_idx.shape[1] * 0.9)).detach().float()
-        y_den_masked1 = y_den1 * e_mask
-        y_den_masked2 = y_den2 * e_mask
+        e_mask = (e_y < 0.2).detach()
+        y_den_masked1 = F.dropout2d(y_den1, 0.5) * e_mask
+        y_den_masked2 = F.dropout2d(y_den2, 0.5) * e_mask
 
-        y_den_new1, loss_rec1 = self.forward_mem(y_den_masked1, self.mem)
-        y_den_new2, loss_rec2 = self.forward_mem(y_den_masked2, self.mem)
+        loss_err = F.l1_loss(y_in1, y_in2) # if (~e_mask).sum() > 0 else 0
 
-        # loss_rec1 = self.compute_sim_loss(y_den_masked1, y_den_new1)
-        # loss_rec2 = self.compute_sim_loss(y_den_masked2, y_den_new2)
+        y_den_new1, logits1 = self.forward_mem(y_den_masked1, self.mem)
+        y_den_new2, logits2 = self.forward_mem(y_den_masked2, self.mem)
 
-        # e_x3 = torch.abs(x3_1 - x3_2)
-        # print(e_x3.max().item(), e_x3.min().item(), e_x3.median().item())
-        # e_x3_mask = (e_x3 < 0.5).detach().float()
-        # x3_1_masked = x3_1 * e_x3_mask
-        # x3_2_masked = x3_2 * e_x3_mask
+        # JSD
+        p1 = F.softmax(logits1, dim=1)
+        p2 = F.softmax(logits2, dim=1)
+        log_p1 = F.log_softmax(logits1, dim=1)
+        log_p2 = F.log_softmax(logits2, dim=1)
+        pm = (p1 + p2) / 2
+        loss_kl = 0.5 / logits1.shape[2] * (F.kl_div(log_p1, pm, reduction='batchmean') + \
+                  F.kl_div(log_p2, pm, reduction='batchmean'))
+
+
+        # loss_kl = F.kl_div(log_p2, log_p1, reduction='batchmean', log_target=True) / logits1.shape[2]
+
         c1 = self.cls_head(x3_1)
         c2 = self.cls_head(x3_2)
 
@@ -375,25 +356,23 @@ class DensityRegressorM(nn.Module):
             c_new2 = c_gt
         else:
             c_new1 = c1.clone().detach()
-            c_new1[c1<0.5] = 0
-            c_new1[c1>=0.5] = 1
+            c_new1[c1<self.thrs] = 0
+            c_new1[c1>=self.thrs] = 1
             c_new2 = c2.clone().detach()
-            c_new2[c2<0.5] = 0
-            c_new2[c2>=0.5] = 1
+            c_new2[c2<self.thrs] = 0
+            c_new2[c2>=self.thrs] = 1
         c_resized1 = upsample(c_new1, scale_factor=4, mode='nearest')
         c_resized2 = upsample(c_new2, scale_factor=4, mode='nearest')
 
         d1 = self.den_head(y_den_new1)
         d2 = self.den_head(y_den_new2)
-
         dc1 = upsample(d1 * c_resized1, scale_factor=4)
         dc2 = upsample(d2 * c_resized2, scale_factor=4)
 
-        loss_rec = loss_rec1 + loss_rec2
         loss_f_sim = -F.cosine_similarity(y_den1, y_den2, dim=1).mean()
         loss_fnew_sim = F.mse_loss(y_den_new1, y_den_new2) #-F.cosine_similarity(y_den_new1, y_den_new2, dim=1).mean()
 
-        return dc1, dc2, c1, c2, loss_f_sim, loss_fnew_sim, loss_rec
+        return dc1, dc2, c1, c2, loss_kl, loss_fnew_sim, loss_err
 
 class DensityRegressorBase(nn.Module):
     def __init__(self, pretrained=True):

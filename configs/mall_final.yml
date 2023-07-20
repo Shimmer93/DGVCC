@@ -1,9 +1,9 @@
 seed: 2112
-version: mall_final_scratch
+version: mall_final_final3
 device: 'cuda:0'
 log_para: 1000
 mode: 'final'
-num_epochs: &num_epochs 200
+num_epochs: &num_epochs 60
 checkpoint:
   - null
   - null
@@ -56,4 +56,5 @@ scheduler:
     max_lr: *lr
     epochs: *num_epochs
     steps_per_epoch: 30
-    final_div_factor: 1000
+    final_div_factor: 100
+    div_factor: 10

@@ -104,9 +104,14 @@ if __name__ == '__main__':
         raise Exception("Path does not exist")
 
     img_fns = []
-    for phase in ['train']:
-        img_fns += glob(os.path.join(path, phase, '*.jpg')) + \
-                     glob(os.path.join(path, phase, '*.png'))
+    for phase in ['val', 'test']:
+        img_fns += glob(os.path.join(path, phase, '*.jpg'))
+    new_fns = []
+    for fn in img_fns:
+        if 'aug' in fn:
+            continue
+        new_fns.append(fn)
+    img_fns = new_fns
 
     with Pool(8) as p:
         r = list(tqdm(p.imap(run, img_fns), total=len(img_fns)))
