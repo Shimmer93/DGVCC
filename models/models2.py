@@ -316,9 +316,9 @@ class DensityRegressorM(nn.Module):
         dc = upsample(dc, scale_factor=4)
 
         # return dc, (d, c, y_den_new, y_cls_new, loss_den_sim, loss_cls_sim)
-        return dc, (d, c, y_den, y_den_new, x3)
+        return dc, c
 
-    def forward_pair(self, img1, img2, c_gt=None):
+    def forward_train(self, img1, img2, c_gt=None):
         y_cat1, x3_1 = self.forward_fe(img1)
         y_cat2, x3_2 = self.forward_fe(img2)
         y_den1 = self.den_dec(y_cat1)
@@ -327,7 +327,7 @@ class DensityRegressorM(nn.Module):
         y_in2 = F.instance_norm(y_den2, eps=1e-5)
         e_y = torch.abs(y_in1 - y_in2)
 
-        e_mask = (e_y < 0.2).detach()
+        e_mask = (e_y < 0.5).detach()
         y_den_masked1 = F.dropout2d(y_den1, 0.5) * e_mask
         y_den_masked2 = F.dropout2d(y_den2, 0.5) * e_mask
 
@@ -369,10 +369,8 @@ class DensityRegressorM(nn.Module):
         dc1 = upsample(d1 * c_resized1, scale_factor=4)
         dc2 = upsample(d2 * c_resized2, scale_factor=4)
 
-        loss_f_sim = -F.cosine_similarity(y_den1, y_den2, dim=1).mean()
-        loss_fnew_sim = F.mse_loss(y_den_new1, y_den_new2) #-F.cosine_similarity(y_den_new1, y_den_new2, dim=1).mean()
 
-        return dc1, dc2, c1, c2, loss_kl, loss_fnew_sim, loss_err
+        return dc1, dc2, c1, c2, loss_kl, loss_err
 
 class DensityRegressorBase(nn.Module):
     def __init__(self, pretrained=True):

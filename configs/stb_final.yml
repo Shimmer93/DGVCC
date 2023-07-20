@@ -1,14 +1,22 @@
 seed: 1293
-version: stb_final_jsd_noerr_theta0.2
-device: 'cuda:2'
+version: stb_final_jsd_noerr_theta0.5_drop0.5_step
+device: 'cuda:3'
 log_para: 1000
+patch_size: 720
 mode: 'final'
-num_epochs: &num_epochs 80
+num_epochs: &num_epochs 120
 checkpoint: null
 model:
-  name: 'dgnet'
+  name: 'final'
   params:
     pretrained: True
+    # mem_size: 1024
+    # mem_dim: 256
+    # cls_thrs: 0.5
+    # err_thrs: 0.5
+    # den_dropout: 0.3
+    # cls_dropout: 0.5
+    # has_err_loss: False
 train_dataset: &train_dataset_params
   name: 'den_cls'
   params: 
@@ -30,7 +38,7 @@ test_dataset:
     pre_resize: 1
 train_loader:
   batch_size: 8
-  num_workers: 16
+  num_workers: 8
   shuffle: True
   pin_memory: True
 val_loader: &val_loader_params
@@ -46,12 +54,10 @@ loss:
 optimizer:
   name: 'adamw'
   params:
-    lr: &lr 0.001
+    lr: &lr 0.0001
     weight_decay: 0.0001
 scheduler:
-  name: 'onecycle'
+  name: 'step'
   params:
-    max_lr: *lr
-    epochs: *num_epochs
-    steps_per_epoch: 20
-    final_div_factor: 1000
+    step_size: 1
+    gamma: 0.95

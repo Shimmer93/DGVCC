@@ -15,8 +15,9 @@ from enum import Enum
 from PIL import Image
 from glob import glob
 
-from trainers.advtrainer import AdvTrainer
-from models.models import get_models
+from trainers.dgtrainer import DGTrainer
+from models.models import DGModel_base, DGModel_mem, DGModel_memcls, DGModel_final
+from models.models2 import DensityRegressorM
 from losses.bl import BL
 from datasets.den_dataset import DensityMapDataset
 from datasets.den_cls_dataset import DenClsDataset
@@ -25,12 +26,15 @@ from datasets.jhu_domain_dataset import JHUDomainDataset
 from datasets.jhu_domain_cls_dataset import JHUDomainClsDataset
 from utils.misc import divide_img_into_patches, denormalize, AverageMeter, DictAvgMeter, seed_everything, get_current_datetime
 
-def get_model(name, params, mode):
-    gen, reg = get_models()
-    if mode == 'generation':
-        return gen
-    else:
-        return reg
+def get_model(name, params):
+    if name == 'base':
+        return DGModel_base(**params)
+    elif name == 'mem':
+        return DGModel_mem(**params)
+    elif name == 'memcls':
+        return DGModel_memcls(**params)
+    elif name == 'final':
+        return DensityRegressorM(**params)    
 
 def get_loss(name, params):
     if name == 'bl':
@@ -96,13 +100,10 @@ def load_config(config_path, task):
     init_params['version'] = cfg['version']
     init_params['device'] = cfg['device']
     init_params['log_para'] = cfg['log_para']
+    init_params['patch_size'] = cfg['patch_size']
     init_params['mode'] = cfg['mode']
 
-    gen, reg = get_models()
-    if cfg['mode'] == 'generation':
-        task_params['model'] = gen
-    else:
-        task_params['model'] = reg
+    task_params['model'] = get_model(cfg['model']['name'], cfg['model']['params'])
 
     task_params['checkpoint'] = cfg['checkpoint']
     
@@ -130,7 +131,7 @@ if __name__ == '__main__':
 
     init_params, task_params = load_config(args.config, args.task)
 
-    trainer = AdvTrainer(**init_params)
+    trainer = DGTrainer(**init_params)
     os.system(f'cp {args.config} {trainer.log_dir}')
 
     if args.task == 'train':
