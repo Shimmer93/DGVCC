@@ -1,29 +1,21 @@
 seed: 1293
-version: jhu_stadium2street_new6
+version: stb_isw_new2
 device: 'cuda:0'
 log_para: 1000
 patch_size: 1440
-mode: 'final'
-num_epochs: &num_epochs 80
-checkpoint: null
+mode: 'isw'
+num_epochs: &num_epochs 120
+checkpoint: /mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/stb_isw_new2/best_118_13.8095.pth
 model:
-  name: 'final'
+  name: 'isw'
   params:
-    pretrained: True
-    mem_size: 1024
-    mem_dim: 256
-    cls_thrs: 0.5
-    err_thrs: 0.5
-    den_dropout: 0.5
-    cls_dropout: 0.5
-    has_err_loss: False
+    variant: 'D'
+    skip: 'm1'
+    skip_num: 48
 train_dataset: &train_dataset_params
-  name: 'jhu_domain_cls'
+  name: 'den_cls'
   params: 
-    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/jhu'
-    domain_label: 'jhu_stadium'
-    domain_type: 'scene'
-    domain: 'stadium'
+    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/stb'
     crop_size: 320
     downsample: 1
     is_grey: False
@@ -31,12 +23,9 @@ train_dataset: &train_dataset_params
     pre_resize: 1
 val_dataset: *train_dataset_params
 test_dataset:
-  name: 'jhu_domain_cls'
+  name: 'den_cls'
   params: 
-    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/jhu'
-    domain_label: 'jhu_street'
-    domain_type: 'scene'
-    domain: 'street'
+    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/qnrf'
     crop_size: 320
     downsample: 1
     is_grey: False
@@ -67,5 +56,5 @@ scheduler:
   params:
     max_lr: *lr
     epochs: *num_epochs
-    steps_per_epoch: 29
+    steps_per_epoch: 20
     final_div_factor: 1000

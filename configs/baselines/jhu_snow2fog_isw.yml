@@ -1,29 +1,24 @@
 seed: 1293
-version: jhu_stadium2street_new6
+version: jhu_snow2fog_isw_new3
 device: 'cuda:0'
 log_para: 1000
 patch_size: 1440
-mode: 'final'
+mode: 'isw'
 num_epochs: &num_epochs 80
-checkpoint: null
+checkpoint: /mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/jhu_snow2fog_isw_new3/best_54_71.5108.pth
 model:
-  name: 'final'
+  name: 'isw'
   params:
-    pretrained: True
-    mem_size: 1024
-    mem_dim: 256
-    cls_thrs: 0.5
-    err_thrs: 0.5
-    den_dropout: 0.5
-    cls_dropout: 0.5
-    has_err_loss: False
+    variant: 'D'
+    skip: 'm1'
+    skip_num: 48
 train_dataset: &train_dataset_params
   name: 'jhu_domain_cls'
   params: 
     root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/jhu'
-    domain_label: 'jhu_stadium'
-    domain_type: 'scene'
-    domain: 'stadium'
+    domain_label: 'jhu_snow'
+    domain_type: 'weather'
+    domain: 3
     crop_size: 320
     downsample: 1
     is_grey: False
@@ -34,9 +29,9 @@ test_dataset:
   name: 'jhu_domain_cls'
   params: 
     root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/jhu'
-    domain_label: 'jhu_street'
-    domain_type: 'scene'
-    domain: 'street'
+    domain_label: 'jhu_fog'
+    domain_type: 'weather'
+    domain: 1
     crop_size: 320
     downsample: 1
     is_grey: False
@@ -67,5 +62,5 @@ scheduler:
   params:
     max_lr: *lr
     epochs: *num_epochs
-    steps_per_epoch: 29
+    steps_per_epoch: 13
     final_div_factor: 1000

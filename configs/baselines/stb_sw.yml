@@ -1,21 +1,19 @@
-seed: 1293
-version: jhu_street2stadium_base
-device: 'cuda:1'
+seed: 0
+version: stb_sw_resnet50_2
+device: 'cuda:0'
 log_para: 1000
-mode: 'final'
+patch_size: 1440
+mode: 'simple'
 num_epochs: &num_epochs 80
-checkpoint: /mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/jhu_street2stadium_base/best_43_108.7556.pth
+checkpoint: /mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/stb_sw_resnet50_2/best_36_11.9369.pth
 model:
-  name: 'dgnet'
+  name: 'sw'
   params:
-    load_weights: True
+    pretrained: True
 train_dataset: &train_dataset_params
-  name: 'jhu_domain'
+  name: 'den_cls'
   params: 
-    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/jhu'
-    raw_root: '/mnt/home/zpengac/USERDIR/Crowd_counting/raw_data/jhu_crowd_v2.0'
-    domain_type: 'scene'
-    domain: 'street'
+    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/stb'
     crop_size: 320
     downsample: 1
     is_grey: False
@@ -23,19 +21,16 @@ train_dataset: &train_dataset_params
     pre_resize: 1
 val_dataset: *train_dataset_params
 test_dataset:
-  name: 'jhu_domain'
+  name: 'den_cls'
   params: 
-    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/jhu'
-    raw_root: '/mnt/home/zpengac/USERDIR/Crowd_counting/raw_data/jhu_crowd_v2.0'
-    domain_type: 'scene'
-    domain: 'stadium'
+    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/qnrf'
     crop_size: 320
     downsample: 1
     is_grey: False
     unit_size: 16
     pre_resize: 1
 train_loader:
-  batch_size: 8
+  batch_size: 16
   num_workers: 16
   shuffle: True
   pin_memory: True
@@ -59,6 +54,5 @@ scheduler:
   params:
     max_lr: *lr
     epochs: *num_epochs
-    steps_per_epoch: 30
-    final_div_factor: 100
-    div_factor: 10
+    steps_per_epoch: 20
+    final_div_factor: 1000

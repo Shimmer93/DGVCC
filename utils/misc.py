@@ -124,32 +124,25 @@ class DictAvgMeter(object):
 def seed_everything(seed):
     random.seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
+    os.environ['CUBLAS_WORKSPACE_CONFIG'] = ":4096:8"
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
+    torch.use_deterministic_algorithms(True, warn_only=True)
+    torch.backends.cudnn.deterministic = False
 
+def seed_worker(worker_id):
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+
+def get_seeded_generator(seed):
+    g = torch.Generator()
+    g.manual_seed(0)
+    return g
+    
 def get_current_datetime():
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 
 def easy_track(iterable, description=None):
     return track(iterable, description=description, complete_style='dim cyan', total=len(iterable))
-
-def patchwise_random_rotate(imgs, bmaps):
-    # print(bmaps.max(), bmaps.min())
-
-    assert len(imgs) == len(bmaps)
-    b, c, H, W = imgs.shape
-    patched_imgs = rearrange(imgs, 'b c (h p1) (w p2) -> (b h w) c p1 p2', p1=16, p2=16)
-    patched_bmaps = rearrange(bmaps, 'b 1 h w -> (b h w)')
-
-    for i in range(len(patched_imgs)):
-        if patched_bmaps[i] > 0.5:
-            continue
-        elif random.random() < 0.2:
-            rand_num = random.randint(1, 3)
-            patched_imgs[i] = F.rotate(patched_imgs[i], 90 * rand_num)
-
-    rotated_imgs = rearrange(patched_imgs, '(b h w) c p1 p2 -> b c (h p1) (w p2)', h=H//16, w=W//16, p1=16, p2=16)
-
-    return rotated_imgs

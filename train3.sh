@@ -5,6 +5,6 @@
 # python main_cls.py --task vis --config configs/sta_reg3.yml
 # python main_cls.py --task train --config configs/sta_gen2.yml
 # python main_cls.py --task vis --config configs/sta_final2.yml
-CUDA_VISIBLE_DEVICES=0 python main.py --task train_test --config configs/stb_final1.yml
-CUDA_VISIBLE_DEVICES=0 python main.py --task train_test --config configs/stb_final2.yml
-CUDA_VISIBLE_DEVICES=0 python main.py --task train_test --config configs/stb_final3.yml
+CUDA_VISIBLE_DEVICES=2 python main.py --task train_test --config configs/stb_final7.yml
+CUDA_VISIBLE_DEVICES=2 python main.py --task train_test --config configs/stb_final8.yml
+CUDA_VISIBLE_DEVICES=2 python main.py --task train_test --config configs/stb_final9.yml

@@ -22,7 +22,7 @@ from losses.bl import BL
 from losses.sim import sim_loss
 from losses.ortho import ortho_loss
 from losses.lw import lw_loss
-from utils.misc import denormalize, divide_img_into_patches, patchwise_random_rotate, seed_everything, get_current_datetime
+from utils.misc import denormalize, divide_img_into_patches, seed_everything, get_current_datetime
 
 class DGTrainer(Trainer):
     def __init__(self, seed, version, device, log_para, patch_size, mode):
@@ -83,6 +83,24 @@ class DGTrainer(Trainer):
 
         return pred_count
     
+    def predict2(self, model, img, img2):
+        h, w = img.shape[2:]
+        ps = self.patch_size
+        if h >= ps or w >= ps:
+            pred_count = 0
+            img_patches, _, _ = divide_img_into_patches(img, ps)
+            img_patches2, _, _ = divide_img_into_patches(img2, ps)
+            for patch, patch2 in zip(img_patches, img_patches2):
+                pred = model(patch) if self.mode == 'base' else model(patch)[0]
+                pred_count += torch.sum(pred).cpu().item() / self.log_para
+                model([patch, patch2], cal_covstat=True)
+        else:
+            pred_dmap = model(img) if self.mode == 'base' else model(img)[0]
+            pred_count = pred_dmap.sum().cpu().item() / self.log_para
+            model([img, img2], cal_covstat=True)
+
+        return pred_count
+    
     def get_visualized_results(self, model, img):
         h, w = img.shape[2:]
         ps = self.patch_size
@@ -128,7 +146,15 @@ class DGTrainer(Trainer):
         imgs2 = imgs2.to(self.device)
         gt_cmaps = gt_datas[-1].to(self.device)
 
-        if self.mode == 'base':
+        if self.mode == 'simple':
+            optimizer.zero_grad()
+            dmaps1 = model(imgs1)
+            loss_den = self.compute_count_loss(loss, dmaps1, gt_datas)
+            loss_total = loss_den
+            loss_total.backward()
+            optimizer.step()
+
+        elif self.mode == 'base':
             optimizer.zero_grad()
             dmaps1 = model(imgs1)
             dmaps2 = model(imgs2)
@@ -137,7 +163,15 @@ class DGTrainer(Trainer):
             loss_total.backward()
             optimizer.step()
 
-        if self.mode == 'cls':
+        elif self.mode == 'add':
+            optimizer.zero_grad()
+            dmaps1, dmaps2, loss_con = model.forward_train(imgs1, imgs2)
+            loss_den = self.compute_count_loss(loss, dmaps1, gt_datas) + self.compute_count_loss(loss, dmaps2, gt_datas)
+            loss_total = loss_den + loss_con
+            loss_total.backward()
+            optimizer.step()
+
+        elif self.mode == 'cls':
             optimizer.zero_grad()
             dmaps1, cmaps1 = model(imgs1, gt_cmaps)
             dmaps2, cmaps2 = model(imgs2, gt_cmaps)
@@ -149,26 +183,46 @@ class DGTrainer(Trainer):
 
         elif self.mode == 'final':
             optimizer.zero_grad()
-            dmaps1, dmaps2, cmaps1, cmaps2, loss_con, loss_err = model.forward_train(imgs1, imgs2, gt_cmaps)
+            dmaps1, dmaps2, cmaps1, cmaps2, cerrmap, loss_con, loss_err = model.forward_train(imgs1, imgs2, gt_cmaps)
             loss_den = self.compute_count_loss(loss, dmaps1, gt_datas) + self.compute_count_loss(loss, dmaps2, gt_datas)
             loss_cls = F.binary_cross_entropy(cmaps1, gt_cmaps) + F.binary_cross_entropy(cmaps2, gt_cmaps)
-            # print(f'den: {loss_den.item()}, cls: {loss_cls.item()}, con: {loss_con.item()}')
-            loss_total = loss_den + 10 * loss_cls + 10 * loss_con # + loss_err # loss_con1 + loss_con2 # + (loss_f_sim + loss_fnew_sim)
+            loss_total = loss_den + 10 * loss_cls + 10 * loss_con # + loss_err 
 
             loss_total.backward()
             optimizer.step()
 
+        elif self.mode == 'isw':
+            optimizer.zero_grad()
+            gts = gt_datas[1].to(self.device)
+            losses = model(imgs1, gts=gts, apply_wtloss=(epoch>5))
+            loss_total = torch.FloatTensor([0]).cuda()
+            loss_total += losses[0]
+            # loss_total += 0.4 * losses[1]
+            if epoch > 5:
+                loss_total += 0.6 * losses[1]
+            loss_total.backward()
+            optimizer.step()
+            
+        else:
+            raise ValueError('Unknown mode: {}'.format(self.mode))
+
         return loss_total.detach().item()
 
     def val_step(self, model, batch):
-        img1, _, gt, _, _ = batch
+            
+        img1, img2, gt, _, _ = batch
         img1 = img1.to(self.device)
-        # img2 = img2.to(self.device)
+        img2 = img2.to(self.device)
 
-        pred_count = self.predict(model, img1)
+        if self.mode == 'isw':
+            with torch.no_grad():
+                pred_count = self.predict2(model, img1, img2)
+        else:
+            pred_count = self.predict(model, img1)
         gt_count = gt.shape[1]
         mae = np.abs(pred_count - gt_count)
         mse = (pred_count - gt_count) ** 2
+
         return mae, {'mse': mse}
 
     def test_step(self, model, batch):
@@ -210,31 +264,47 @@ class DGTrainer(Trainer):
             plt.close()
 
         else:
-            pred_dmap1, _, pred_cmap1 = self.get_visualized_results_with_cls(model, img1)
-            pred_dmap2, _, pred_cmap2 = self.get_visualized_results_with_cls(model, img2)
+            pred_dmap1, pred_cmap1 = self.get_visualized_results_with_cls(model, img1)
+            pred_dmap2, pred_cmap2 = self.get_visualized_results_with_cls(model, img2)
             img1 = denormalize(img1.detach())[0].cpu().permute(1, 2, 0).numpy()
             img2 = denormalize(img2.detach())[0].cpu().permute(1, 2, 0).numpy()
             pred_count1 = pred_dmap1.sum() / self.log_para
             pred_count2 = pred_dmap2.sum() / self.log_para
             gt_count = gt.shape[1]
 
+            new_cmap1 = pred_cmap1.copy()
+            new_cmap1[new_cmap1 < 0.5] = 0
+            new_cmap1[new_cmap1 >= 0.5] = 1
+            # new_cmap1 = np.resize(new_cmap1, (new_cmap1.shape[0]*16, new_cmap1.shape[1]*16))
+            new_cmap2 = pred_cmap2.copy()
+            new_cmap2[new_cmap2 < 0.5] = 0
+            new_cmap2[new_cmap2 >= 0.5] = 1
+            # new_cmap2 = np.resize(new_cmap2, (new_cmap2.shape[0]*16, new_cmap2.shape[1]*16))
+
             datas = [img1, pred_dmap1, pred_cmap1, img2, pred_dmap2, pred_cmap2]
-            titles = [name, f'Pred1: {pred_count1}', 'Cls1', f'GT: {gt_count}', f'Pred2: {pred_count2}', 'Cls2']
+            titles = [name[0], f'Pred1: {pred_count1}', 'Cls1', f'GT: {gt_count}', f'Pred2: {pred_count2}', 'Cls2']
 
             fig = plt.figure(figsize=(15, 6))
             for i in range(6):
                 ax = fig.add_subplot(2, 3, i+1)
                 ax.set_title(titles[i])
                 ax.imshow(datas[i])
-
             plt.savefig(os.path.join(vis_dir, f'{name[0]}.png'))
+
+            new_datas = [img1, pred_cmap1, new_cmap1, pred_dmap1]
+            new_titles = [f'{name[0]}', 'Cls', 'BCls', f'Pred_{pred_count1}']
+            for i in range(len(new_datas)):
+                plt.imsave(os.path.join(vis_dir, f'{name[0]}_{new_titles[i]}.png'), new_datas[i])
+
             plt.close()
 
     def train_and_test_epoch(self, model, loss, train_dataloader, val_dataloader, test_dataloader, \
                              optimizer, scheduler, epoch, best_criterion, best_epoch):
+        prev_best_criterion = best_criterion
         best_criterion, best_epoch = self.train_epoch(model, loss, train_dataloader, val_dataloader, \
                                                       optimizer, scheduler, epoch, best_criterion, best_epoch)
-        self.test(model, test_dataloader)
+        if best_criterion < prev_best_criterion:
+            self.test(model, test_dataloader)
         return best_criterion, best_epoch
     
     def train_and_test(self, model, loss, train_dataloader, val_dataloader, test_dataloader, \

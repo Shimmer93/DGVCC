@@ -24,9 +24,10 @@ class JHUDomainDataset(Dataset):
         dmaps = torch.stack(transposed_batch[2], 0)
         return images, (points, dmaps)
 
-    def __init__(self, root, raw_root, crop_size, domain_type, domain, downsample, method, is_grey=False, unit_size=0, pre_resize=1):
+    def __init__(self, root, domain_label, crop_size, domain_type, domain, downsample, method, is_grey=False, unit_size=0, pre_resize=1):
         self.root = root
-        self.raw_root = raw_root
+        # self.raw_root = raw_root
+        self.domain_label = domain_label
         if isinstance(crop_size, int):
             self.crop_size = (crop_size, crop_size)
         else:
@@ -37,33 +38,38 @@ class JHUDomainDataset(Dataset):
         self.unit_size = unit_size
         self.pre_resize = pre_resize
 
-        self.train_df = pd.read_csv(os.path.join(self.raw_root, 'train', 'image_labels.txt'), sep=',', header=None)
-        self.val_df = pd.read_csv(os.path.join(self.raw_root, 'val', 'image_labels.txt'), sep=',', header=None)
-        self.test_df = pd.read_csv(os.path.join(self.raw_root, 'test', 'image_labels.txt'), sep=',', header=None)
+        # self.train_df = pd.read_csv(os.path.join(self.raw_root, 'train', 'image_labels.txt'), sep=',', header=None)
+        # self.val_df = pd.read_csv(os.path.join(self.raw_root, 'val', 'image_labels.txt'), sep=',', header=None)
+        # self.test_df = pd.read_csv(os.path.join(self.raw_root, 'test', 'image_labels.txt'), sep=',', header=None)
+        phase_dict = {'train': 'train', 'val': 'val', 'test': 'val'}
+        img_txt = os.path.join(self.root, 'domains', f'{domain_label}_{phase_dict[method]}.txt')
+        with open(img_txt, 'r') as f:
+            self.img_fns = f.readlines()
+        self.img_fns = [img_fn.strip() for img_fn in self.img_fns]
 
-        self.domain_type = domain_type
-        self.domain = domain
+        # self.domain_type = domain_type
+        # self.domain = domain
         
-        if domain_type == 'scene':
-            column = 2
-        elif domain_type == 'weather':
-            column = 3
-        else:
-            raise NotImplementedError
+        # if domain_type == 'scene':
+        #     column = 2
+        # elif domain_type == 'weather':
+        #     column = 3
+        # else:
+        #     raise NotImplementedError
         
-        train_idxs = self.train_df[self.train_df[column]==domain][0].tolist()
-        val_idxs = self.val_df[self.val_df[column]==domain][0].tolist()
-        test_idxs = self.test_df[self.test_df[column]==domain][0].tolist()
+        # train_idxs = self.train_df[self.train_df[column]==domain][0].tolist()
+        # val_idxs = self.val_df[self.val_df[column]==domain][0].tolist()
+        # test_idxs = self.test_df[self.test_df[column]==domain][0].tolist()
 
-        self.img_fns = []
-        for phase, idxs in zip(['train', 'val', 'test'], [train_idxs, val_idxs, test_idxs]):
-            for idx in idxs:
-                self.img_fns.append(os.path.join(self.root, phase, str(idx).zfill(4) + '.jpg'))
-        self.img_fns = sorted(self.img_fns)
-        if self.method == 'train':
-            self.img_fns = self.img_fns[:int(len(self.img_fns) * 0.8)]
-        elif self.method == 'val':
-            self.img_fns = self.img_fns[int(len(self.img_fns) * 0.8):]
+        # self.img_fns = []
+        # for phase, idxs in zip(['train', 'val', 'test'], [train_idxs, val_idxs, test_idxs]):
+        #     for idx in idxs:
+        #         self.img_fns.append(os.path.join(self.root, phase, str(idx).zfill(4) + '.jpg'))
+        # self.img_fns = sorted(self.img_fns)
+        # if self.method == 'train':
+        #     self.img_fns = self.img_fns[:int(len(self.img_fns) * 0.8)]
+        # elif self.method == 'val':
+        #     self.img_fns = self.img_fns[int(len(self.img_fns) * 0.8):]
 
         if self.method == 'train':
             self.transform = T.Compose([

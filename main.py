@@ -16,25 +16,37 @@ from PIL import Image
 from glob import glob
 
 from trainers.dgtrainer import DGTrainer
-from models.models import DGModel_base, DGModel_mem, DGModel_memcls, DGModel_final
-from models.models2 import DensityRegressorM
+from models.models import DGModel_base, DGModel_mem, DGModel_memadd, DGModel_cls, DGModel_memcls, DGModel_final
+from models.SW import SWCounter_VGG, SWCounter_ResNet
+from models.ibnnet import IBNCounter_ResNet
+from models.ISW import ISWCounter_ResNet
 from losses.bl import BL
 from datasets.den_dataset import DensityMapDataset
 from datasets.den_cls_dataset import DenClsDataset
 from datasets.bay_dataset import BayesianDataset
 from datasets.jhu_domain_dataset import JHUDomainDataset
 from datasets.jhu_domain_cls_dataset import JHUDomainClsDataset
-from utils.misc import divide_img_into_patches, denormalize, AverageMeter, DictAvgMeter, seed_everything, get_current_datetime
+from utils.misc import divide_img_into_patches, denormalize, AverageMeter, DictAvgMeter, seed_worker, get_seeded_generator, get_current_datetime, seed_everything
 
 def get_model(name, params):
     if name == 'base':
         return DGModel_base(**params)
     elif name == 'mem':
         return DGModel_mem(**params)
+    elif name == 'memadd':
+        return DGModel_memadd(**params)
+    elif name == 'cls':
+        return DGModel_cls(**params)
     elif name == 'memcls':
         return DGModel_memcls(**params)
     elif name == 'final':
-        return DensityRegressorM(**params)    
+        return DGModel_final(**params)
+    elif name == 'sw':
+        return SWCounter_ResNet(**params)
+    elif name == 'ibn':
+        return IBNCounter_ResNet(**params)
+    elif name == 'isw':
+        return ISWCounter_ResNet(**params)
 
 def get_loss(name, params):
     if name == 'bl':
@@ -103,14 +115,18 @@ def load_config(config_path, task):
     init_params['patch_size'] = cfg['patch_size']
     init_params['mode'] = cfg['mode']
 
+    seed_everything(cfg['seed'])
+
     task_params['model'] = get_model(cfg['model']['name'], cfg['model']['params'])
 
     task_params['checkpoint'] = cfg['checkpoint']
-    
+
+    generator = get_seeded_generator(cfg['seed'])
+
     if task == 'train' or task == 'train_test':
         task_params['loss'] = get_loss(cfg['loss']['name'], cfg['loss']['params'])
         train_dataset, collate = get_dataset(cfg['train_dataset']['name'], cfg['train_dataset']['params'], method='train')
-        task_params['train_dataloader'] = DataLoader(train_dataset, collate_fn=collate, **cfg['train_loader'])
+        task_params['train_dataloader'] = DataLoader(train_dataset, collate_fn=collate, **cfg['train_loader'], worker_init_fn=seed_worker, generator=generator)
         val_dataset, _ = get_dataset(cfg['val_dataset']['name'], cfg['val_dataset']['params'], method='val')
         task_params['val_dataloader'] = DataLoader(val_dataset, **cfg['val_loader'])
         task_params['optimizer'] = get_optimizer(cfg['optimizer']['name'], cfg['optimizer']['params'], task_params['model'])

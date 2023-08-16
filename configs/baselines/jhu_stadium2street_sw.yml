@@ -1,36 +1,37 @@
 seed: 1293
-version: jhu_street2stadium_bl
-device: &device 'cuda:0'
-log_para: 100
-mode: 'final'
-num_epochs: &num_epochs 80
-checkpoint: null
+version: jhu_stadium2street_sw2
+device: 'cuda:0'
+log_para: 1000
+patch_size: 1440
+mode: 'simple'
+num_epochs: &num_epochs 120
+checkpoint: /mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/jhu_stadium2street_sw2/best_46_179.4503.pth
 model:
-  name: 'bl'
+  name: 'sw'
   params:
     pretrained: True
 train_dataset: &train_dataset_params
-  name: 'jhu_domain_bay'
+  name: 'jhu_domain_cls'
   params: 
     root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/jhu'
-    raw_root: '/mnt/home/zpengac/USERDIR/Crowd_counting/raw_data/jhu_crowd_v2.0'
-    domain_type: 'scene'
-    domain: 'street'
-    crop_size: &csize 320
-    downsample: &ds 8
+    domain_label: 'jhu_stadium'
+    domain_type: 'weather'
+    domain: 3
+    crop_size: 320
+    downsample: 1
     is_grey: False
     unit_size: 16
     pre_resize: 1
 val_dataset: *train_dataset_params
 test_dataset:
-  name: 'jhu_domain_bay'
+  name: 'jhu_domain_cls'
   params: 
     root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/jhu'
-    raw_root: '/mnt/home/zpengac/USERDIR/Crowd_counting/raw_data/jhu_crowd_v2.0'
-    domain_type: 'scene'
-    domain: 'stadium'
-    crop_size: *csize
-    downsample: *ds
+    domain_label: 'jhu_street'
+    domain_type: 'weather'
+    domain: 1
+    crop_size: 320
+    downsample: 1
     is_grey: False
     unit_size: 16
     pre_resize: 1
@@ -46,14 +47,9 @@ val_loader: &val_loader_params
   pin_memory: False
 test_loader: *val_loader_params
 loss:
-  name: 'bl'
+  name: 'mse'
   params:
-    device: *device
-    sigma: 8.0
-    c_size: *csize
-    stride: *ds
-    background_ratio: 0.15
-    use_background: True
+    reduction: 'mean'
 optimizer:
   name: 'adamw'
   params:
@@ -64,6 +60,5 @@ scheduler:
   params:
     max_lr: *lr
     epochs: *num_epochs
-    steps_per_epoch: 30
-    final_div_factor: 100
-    div_factor: 10
+    steps_per_epoch: 13
+    final_div_factor: 1000

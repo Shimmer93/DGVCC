@@ -104,7 +104,7 @@ if __name__ == '__main__':
         raise Exception("Path does not exist")
 
     img_fns = []
-    for phase in ['val', 'test']:
+    for phase in ['test']:
         img_fns += glob(os.path.join(path, phase, '*.jpg'))
     new_fns = []
     for fn in img_fns:

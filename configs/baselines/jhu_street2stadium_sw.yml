@@ -1,29 +1,22 @@
 seed: 1293
-version: jhu_stadium2street_new6
+version: jhu_street2stadium_sw2
 device: 'cuda:0'
 log_para: 1000
 patch_size: 1440
-mode: 'final'
-num_epochs: &num_epochs 80
-checkpoint: null
+mode: 'simple'
+num_epochs: &num_epochs 120
+checkpoint: /mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/jhu_street2stadium_sw2/best_48_30.5305.pth
 model:
-  name: 'final'
+  name: 'sw'
   params:
     pretrained: True
-    mem_size: 1024
-    mem_dim: 256
-    cls_thrs: 0.5
-    err_thrs: 0.5
-    den_dropout: 0.5
-    cls_dropout: 0.5
-    has_err_loss: False
 train_dataset: &train_dataset_params
   name: 'jhu_domain_cls'
   params: 
     root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/jhu'
-    domain_label: 'jhu_stadium'
-    domain_type: 'scene'
-    domain: 'stadium'
+    domain_label: 'jhu_street'
+    domain_type: 'weather'
+    domain: 3
     crop_size: 320
     downsample: 1
     is_grey: False
@@ -34,9 +27,9 @@ test_dataset:
   name: 'jhu_domain_cls'
   params: 
     root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/jhu'
-    domain_label: 'jhu_street'
-    domain_type: 'scene'
-    domain: 'street'
+    domain_label: 'jhu_stadium'
+    domain_type: 'weather'
+    domain: 1
     crop_size: 320
     downsample: 1
     is_grey: False
@@ -67,5 +60,5 @@ scheduler:
   params:
     max_lr: *lr
     epochs: *num_epochs
-    steps_per_epoch: 29
+    steps_per_epoch: 13
     final_div_factor: 1000

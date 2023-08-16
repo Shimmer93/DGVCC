@@ -1,38 +1,39 @@
 seed: 1293
-version: jhu_stadium2street_sasnet
-device: 'cuda:3'
+version: jhu_stadium2street_ibn2
+device: 'cuda:0'
 log_para: 1000
-mode: 'final'
-num_epochs: &num_epochs 80
-checkpoint: null
+patch_size: 1440
+mode: 'simple'
+num_epochs: &num_epochs 120
+checkpoint: /mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/jhu_stadium2street_ibn2/best_65_159.2581.pth
 model:
-  name: 'sasnet'
+  name: 'ibn'
   params:
     pretrained: True
 train_dataset: &train_dataset_params
-  name: 'jhu_domain'
+  name: 'jhu_domain_cls'
   params: 
     root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/jhu'
-    raw_root: '/mnt/home/zpengac/USERDIR/Crowd_counting/raw_data/jhu_crowd_v2.0'
-    domain_type: 'scene'
-    domain: 'stadium'
+    domain_label: 'jhu_stadium'
+    domain_type: 'weather'
+    domain: 3
     crop_size: 320
     downsample: 1
     is_grey: False
-    unit_size: 32
+    unit_size: 16
     pre_resize: 1
 val_dataset: *train_dataset_params
 test_dataset:
-  name: 'jhu_domain'
+  name: 'jhu_domain_cls'
   params: 
     root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/jhu'
-    raw_root: '/mnt/home/zpengac/USERDIR/Crowd_counting/raw_data/jhu_crowd_v2.0'
-    domain_type: 'scene'
-    domain: 'street'
+    domain_label: 'jhu_street'
+    domain_type: 'weather'
+    domain: 1
     crop_size: 320
     downsample: 1
     is_grey: False
-    unit_size: 32
+    unit_size: 16
     pre_resize: 1
 train_loader:
   batch_size: 16
@@ -59,6 +60,5 @@ scheduler:
   params:
     max_lr: *lr
     epochs: *num_epochs
-    steps_per_epoch: 30
-    final_div_factor: 100
-    div_factor: 10
+    steps_per_epoch: 13
+    final_div_factor: 1000

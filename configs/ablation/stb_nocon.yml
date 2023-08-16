@@ -1,5 +1,5 @@
-seed: 1293
-version: jhu_stadium2street_new6
+seed: 2112
+version: stb_nocon
 device: 'cuda:0'
 log_para: 1000
 patch_size: 1440
@@ -18,12 +18,9 @@ model:
     cls_dropout: 0.5
     has_err_loss: False
 train_dataset: &train_dataset_params
-  name: 'jhu_domain_cls'
+  name: 'den_cls'
   params: 
-    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/jhu'
-    domain_label: 'jhu_stadium'
-    domain_type: 'scene'
-    domain: 'stadium'
+    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/stb'
     crop_size: 320
     downsample: 1
     is_grey: False
@@ -31,12 +28,9 @@ train_dataset: &train_dataset_params
     pre_resize: 1
 val_dataset: *train_dataset_params
 test_dataset:
-  name: 'jhu_domain_cls'
+  name: 'den_cls'
   params: 
-    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/jhu'
-    domain_label: 'jhu_street'
-    domain_type: 'scene'
-    domain: 'street'
+    root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/sta'
     crop_size: 320
     downsample: 1
     is_grey: False
@@ -67,5 +61,5 @@ scheduler:
   params:
     max_lr: *lr
     epochs: *num_epochs
-    steps_per_epoch: 29
+    steps_per_epoch: 20
     final_div_factor: 1000

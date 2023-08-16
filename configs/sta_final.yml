@@ -1,22 +1,22 @@
-seed: 1293
-version: sta_final_jsd_noerr_theta0.5_drop0.5_step
-device: 'cuda:2'
+seed: 2112
+version: sta_onecycle300_2
+device: 'cuda:0'
 log_para: 1000
-patch_size: 720
+patch_size: 10000
 mode: 'final'
-num_epochs: &num_epochs 120
-checkpoint: null
+num_epochs: &num_epochs 150
+checkpoint: /mnt/home/zpengac/USERDIR/Crowd_counting/DGVCC/logs/sta_onecycle300_2/test_11.645281469417524.pth
 model:
   name: 'final'
   params:
     pretrained: True
-    # mem_size: 1024
-    # mem_dim: 256
-    # cls_thrs: 0.5
-    # err_thrs: 0.5
-    # den_dropout: 0.3
-    # cls_dropout: 0.5
-    # has_err_loss: True
+    mem_size: 1024
+    mem_dim: 256
+    cls_thrs: 0.5
+    err_thrs: 0.5
+    den_dropout: 0.5
+    cls_dropout: 0.5
+    has_err_loss: False
 train_dataset: &train_dataset_params
   name: 'den_cls'
   params: 
@@ -37,7 +37,7 @@ test_dataset:
     unit_size: 16
     pre_resize: 1
 train_loader:
-  batch_size: 8
+  batch_size: 16
   num_workers: 16
   shuffle: True
   pin_memory: True
@@ -54,10 +54,12 @@ loss:
 optimizer:
   name: 'adamw'
   params:
-    lr: &lr 0.0001
+    lr: &lr 0.001
     weight_decay: 0.0001
 scheduler:
-  name: 'step'
+  name: 'onecycle'
   params:
-    step_size: 1
-    gamma: 0.95
+    max_lr: *lr
+    epochs: *num_epochs
+    steps_per_epoch: 15
+    final_div_factor: 1000

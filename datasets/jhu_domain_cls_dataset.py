@@ -27,8 +27,8 @@ class JHUDomainClsDataset(JHUDomainDataset):
         bmaps = torch.stack(transposed_batch[4], 0)
         return images1, images2, (points, dmaps, bmaps)
 
-    def __init__(self, root, raw_root, crop_size, domain_type, domain, downsample, method, is_grey=False, unit_size=0, pre_resize=1):
-        super().__init__(root, raw_root, crop_size, domain_type, domain, downsample, method, is_grey, unit_size, pre_resize)
+    def __init__(self, root, domain_label, crop_size, domain_type, domain, downsample, method, is_grey=False, unit_size=0, pre_resize=1):
+        super().__init__(root, domain_label, crop_size, domain_type, domain, downsample, method, is_grey, unit_size, pre_resize)
         
         self.more_transform = T.Compose([
             T.RandomApply([T.ColorJitter(brightness=0.5, contrast=0.2, saturation=0.2, hue=0.1)], p=0.8),

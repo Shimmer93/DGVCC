@@ -1,36 +1,44 @@
 seed: 1293
-version: jhu_stadium2street_csrnet
+version: jhu_fog2snow_new4
 device: 'cuda:0'
-log_para: 100
+log_para: 1000
+patch_size: 1440
 mode: 'final'
 num_epochs: &num_epochs 80
 checkpoint: null
 model:
-  name: 'csrnet'
+  name: 'final'
   params:
-    load_weights: True
+    pretrained: True
+    mem_size: 1024
+    mem_dim: 256
+    cls_thrs: 0.5
+    err_thrs: 0.5
+    den_dropout: 0.3
+    cls_dropout: 0.5
+    has_err_loss: False
 train_dataset: &train_dataset_params
-  name: 'jhu_domain'
+  name: 'jhu_domain_cls'
   params: 
     root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/jhu'
-    raw_root: '/mnt/home/zpengac/USERDIR/Crowd_counting/raw_data/jhu_crowd_v2.0'
-    domain_type: 'scene'
-    domain: 'street'
-    crop_size: 512
-    downsample: 8
+    domain_label: 'jhu_fog'
+    domain_type: 'weather'
+    domain: 1
+    crop_size: 320
+    downsample: 1
     is_grey: False
     unit_size: 16
     pre_resize: 1
 val_dataset: *train_dataset_params
 test_dataset:
-  name: 'jhu_domain'
+  name: 'jhu_domain_cls'
   params: 
     root: '/mnt/home/zpengac/USERDIR/Crowd_counting/datasets/jhu'
-    raw_root: '/mnt/home/zpengac/USERDIR/Crowd_counting/raw_data/jhu_crowd_v2.0'
-    domain_type: 'scene'
-    domain: 'stadium'
-    crop_size: 512
-    downsample: 8
+    domain_label: 'jhu_snow'
+    domain_type: 'weather'
+    domain: 3
+    crop_size: 320
+    downsample: 1
     is_grey: False
     unit_size: 16
     pre_resize: 1
@@ -52,13 +60,12 @@ loss:
 optimizer:
   name: 'adamw'
   params:
-    lr: &lr 0.0001
+    lr: &lr 0.001
     weight_decay: 0.0001
 scheduler:
   name: 'onecycle'
   params:
     max_lr: *lr
     epochs: *num_epochs
-    steps_per_epoch: 30
-    final_div_factor: 100
-    div_factor: 10
+    steps_per_epoch: 11
+    final_div_factor: 1000

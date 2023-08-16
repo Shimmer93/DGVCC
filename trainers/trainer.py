@@ -24,6 +24,8 @@ class Trainer(object):
         self.version = version
         self.device = torch.device(device)
 
+        seed_everything(self.seed)
+
         self.log_dir = os.path.join('logs', self.version)
         os.makedirs(self.log_dir, exist_ok=True)
 
@@ -73,8 +75,6 @@ class Trainer(object):
     def train_epoch(self, model, loss, train_dataloader, val_dataloader, optimizer, scheduler, epoch, best_criterion, best_epoch):
         start_time = time.time()
 
-        seed_everything(self.seed + epoch)
-
         # Training
         self.set_model_train(model)
         for batch in easy_track(train_dataloader, description=f'Epoch {epoch}: Training...'):
@@ -92,7 +92,8 @@ class Trainer(object):
         criterion_meter = AverageMeter()
         additional_meter = DictAvgMeter()
         for batch in easy_track(val_dataloader, description=f'Epoch {epoch}: Validating...'):
-            criterion, additional = self.val_step(model, batch)
+            with torch.no_grad():
+                criterion, additional = self.val_step(model, batch)
             criterion_meter.update(criterion, additional['n']) if 'n' in additional else criterion_meter.update(criterion)
             additional_meter.update(additional)
         current_criterion = criterion_meter.avg
@@ -142,12 +143,21 @@ class Trainer(object):
         self.set_model_eval(model)
         result_meter = DictAvgMeter()
         for batch in easy_track(test_dataloader, description='Testing...'):
-            result = self.test_step(model, batch)
+            with torch.no_grad():
+                result = self.test_step(model, batch)
             result_meter.update(result)
         self.log('Testing results:', end=' ')
         for key, value in result_meter.avg.items():
             self.log('{}: {:.4f}'.format(key, value), end=' ')
         self.log('')
+
+        test_mae = result_meter.avg['mae']
+        testvalue = 105
+        if self.version.startswith('sta'):
+            testvalue = 15.5
+        if test_mae < testvalue:
+            self.log('Saving test model...')
+            self.save_ckpt(model, os.path.join(self.log_dir, f'test_{test_mae}.pth'))
 
         self.log('Testing results saved to {}'.format(self.log_dir))
         self.log('End testing at {}'.format(get_current_datetime()))
@@ -162,7 +172,8 @@ class Trainer(object):
 
         self.set_model_eval(model)
         for batch in easy_track(test_dataloader, description='Visualizing...'):
-            self.vis_step(model, batch)
+            with torch.no_grad():
+                self.vis_step(model, batch)
 
         self.log('Visualization results saved to {}'.format(self.log_dir))
         self.log('End visualization at {}'.format(get_current_datetime()))
